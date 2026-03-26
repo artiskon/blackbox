@@ -1,0 +1,7 @@
+node_modules/
+dev-logs/
+firebase.json
+*.log
+package-lock.json
+test*.mjs
+test.html

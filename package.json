@@ -1,0 +1,37 @@
+{
+  "name": "@tiskon/blackbox",
+  "version": "1.0.0",
+  "description": "Dev-time error monitoring and activity recording for React/Firebase apps. Built for AI-assisted debugging.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./components": "./src/components/index.js",
+    "./firebase": "./src/core/hooks/firebaseHook.js"
+  },
+  "bin": {
+    "bb-check": "./src/cli/bb-check.js",
+    "bb-health": "./src/cli/bb-health.js",
+    "bb-timeline": "./src/cli/bb-timeline.js",
+    "bb-clear": "./src/cli/bb-clear.js"
+  },
+  "sideEffects": false,
+  "peerDependencies": {
+    "firebase": ">=9.0.0",
+    "react": ">=17.0.0",
+    "react-dom": ">=17.0.0"
+  },
+  "keywords": [
+    "firebase", "error-tracking", "debugging", "react",
+    "dev-tools", "vibe-coding", "ai-debugging", "blackbox"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/artiskon/blackbox"
+  },
+  "license": "MIT",
+  "files": ["src/"],
+  "devDependencies": {
+    "jsdom": "^29.0.1"
+  }
+}
