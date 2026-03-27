@@ -123,7 +123,7 @@ Adding the BlackBox debugging workflow to your project's `CLAUDE.md` file makes 
 
 - **Timeline deduplication is approximate.** Two distinct events can share a timestamp. The timeline deduplicates by timestamp string, which is usually correct but not guaranteed.
 
-- **Dev-only by default.** BlackBox disables itself when `NODE_ENV === 'production'`. Do not rely on BlackBox for production monitoring. It is designed exclusively for development.
+- **Dev-only by default.** BlackBox disables itself when `NODE_ENV === 'production'`. To override this (e.g. if you test in production builds), pass `enabled: true` in `blackbox.init({ db, enabled: true })`. This forces BlackBox on regardless of `NODE_ENV`. Do not rely on BlackBox for production monitoring — it is designed for development debugging.
 
 - **Emulator is the recommended Firestore target.** Using cloud Firestore requires authenticated security rules. Never use open rules (`allow read, write: if true`) on a cloud Firestore project.
 
