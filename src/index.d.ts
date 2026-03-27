@@ -19,6 +19,8 @@ export interface BlackBoxConfig {
   collectionName?: string;
   /** Maximum breadcrumbs to keep in memory (default: 80) */
   maxBreadcrumbs?: number;
+  /** Max bytes to capture from request/response bodies on non-2xx responses (default: 1024) */
+  maxErrorBodyLength?: number;
   /** URL patterns to exclude from network tracking (default: Firestore, HMR, etc.) */
   networkExcludePatterns?: string[];
   /** Environment label (e.g. 'development', 'staging') */

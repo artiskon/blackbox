@@ -57,15 +57,41 @@ export function installNetworkHook(blackbox) {
         } catch { /* ignore */ }
       }
 
-      blackbox._addBreadcrumb('network', crumbData);
-
+      // On non-2xx: capture request + response bodies for debugging
       if (!ok) {
+        const maxBody = config.maxErrorBodyLength || 1024;
+        const errorContext = { status, method, url, duration };
+
+        // Capture request body
+        try {
+          if (init.body) {
+            const bodyStr = typeof init.body === 'string' ? init.body
+              : init.body instanceof FormData ? [...init.body.keys()].join(', ')
+              : String(init.body);
+            errorContext.requestBody = bodyStr.slice(0, maxBody);
+          }
+        } catch { /* ignore */ }
+
+        // Capture response body (clone to avoid consuming the stream)
+        try {
+          const cloned = response.clone();
+          const text = await cloned.text();
+          if (text) {
+            errorContext.responseBody = text.slice(0, maxBody);
+            crumbData.responseBody = text.slice(0, 200); // shorter for breadcrumbs
+          }
+        } catch { /* ignore */ }
+
+        blackbox._addBreadcrumb('network', crumbData);
+
         blackbox._recordError({
           message: `HTTP ${status}: ${method} ${url}`,
           stack: '',
           source: 'network',
-          context: { status, method, url, duration }
+          context: errorContext
         });
+      } else {
+        blackbox._addBreadcrumb('network', crumbData);
       }
 
       if (ok && duration > config.slowRequestThreshold) {

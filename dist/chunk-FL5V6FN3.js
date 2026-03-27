@@ -19,6 +19,7 @@ var DEFAULTS = {
   maxMessageLength: 2e3,
   maxUrlLength: 500,
   maxBodyLength: 0,
+  maxErrorBodyLength: 1024,
   maxClassNameLength: 200,
   maxBreadcrumbRepeat: 3,
   activityFlushInterval: 12e4,
@@ -350,14 +351,34 @@ function installNetworkHook(blackbox2) {
         } catch (e) {
         }
       }
-      blackbox2._addBreadcrumb("network", crumbData);
       if (!ok) {
+        const maxBody = config.maxErrorBodyLength || 1024;
+        const errorContext = { status, method, url, duration };
+        try {
+          if (init.body) {
+            const bodyStr = typeof init.body === "string" ? init.body : init.body instanceof FormData ? [...init.body.keys()].join(", ") : String(init.body);
+            errorContext.requestBody = bodyStr.slice(0, maxBody);
+          }
+        } catch (e) {
+        }
+        try {
+          const cloned = response.clone();
+          const text = await cloned.text();
+          if (text) {
+            errorContext.responseBody = text.slice(0, maxBody);
+            crumbData.responseBody = text.slice(0, 200);
+          }
+        } catch (e) {
+        }
+        blackbox2._addBreadcrumb("network", crumbData);
         blackbox2._recordError({
           message: `HTTP ${status}: ${method} ${url}`,
           stack: "",
           source: "network",
-          context: { status, method, url, duration }
+          context: errorContext
         });
+      } else {
+        blackbox2._addBreadcrumb("network", crumbData);
       }
       if (ok && duration > config.slowRequestThreshold) {
         blackbox2._addBreadcrumb("performance", {

@@ -6,6 +6,7 @@ export const DEFAULTS = {
   maxMessageLength: 2000,
   maxUrlLength: 500,
   maxBodyLength: 0,
+  maxErrorBodyLength: 1024,
   maxClassNameLength: 200,
   maxBreadcrumbRepeat: 3,
   activityFlushInterval: 120000,
