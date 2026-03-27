@@ -211,6 +211,7 @@ async function _processQueue() {
   _processing = false;
 }
 async function _doWrite(errorEntry) {
+  var _a;
   _writingError = true;
   try {
     const fns = await getFirestoreFns();
@@ -235,7 +236,10 @@ async function _doWrite(errorEntry) {
       if (!snapshot.empty) {
         existingDoc = snapshot.docs[0];
       }
-    } catch (e) {
+    } catch (dedupErr) {
+      if ((_a = dedupErr == null ? void 0 : dedupErr.message) == null ? void 0 : _a.includes("index")) {
+        console.warn("[BlackBox] Deduplication query failed \u2014 a Firestore composite index is required. Errors will be stored without dedup until the index is created. See: https://github.com/artiskon/blackbox#firestore-indexes");
+      }
       existingDoc = null;
     }
     if (existingDoc) {

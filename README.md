@@ -107,6 +107,46 @@ blackbox.init({
 });
 ```
 
+## Firestore Indexes
+
+If you use **Cloud Firestore** (not the emulator), BlackBox requires composite indexes for deduplication and CLI queries. Without them, errors won't be deduplicated and CLI commands will fail.
+
+Add this to your `firestore.indexes.json`:
+
+```json
+{
+  "indexes": [
+    {
+      "collectionGroup": "__blackbox",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "fingerprint", "order": "ASCENDING" },
+        { "fieldPath": "type", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "__blackbox",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "type", "order": "ASCENDING" },
+        { "fieldPath": "lastSeen", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "__blackbox",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "type", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    }
+  ]
+}
+```
+
+Then deploy with `firebase deploy --only firestore:indexes`. Alternatively, the first time a query fails, the Firestore error message will include a direct link to create the required index.
+
 ## CLAUDE.md Integration
 
 Adding the BlackBox debugging workflow to your project's `CLAUDE.md` file makes AI assistants automatically check BlackBox data before debugging. See `CLAUDEMD-SNIPPET.md` in this package for the exact text to paste.

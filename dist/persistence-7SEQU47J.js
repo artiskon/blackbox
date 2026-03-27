@@ -8,7 +8,7 @@ import {
   getPersistenceConfig,
   initPersistence,
   isCircuitOpen
-} from "./chunk-KLMU2VSX.js";
+} from "./chunk-QHIKVRM4.js";
 export {
   _resetPersistence,
   _setCollectionRef,

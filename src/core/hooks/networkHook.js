@@ -20,7 +20,7 @@ export function installNetworkHook(blackbox) {
       // Network error (offline, DNS failure, etc.)
       try {
         const duration = Date.now() - start;
-        blackbox._addBreadcrumb('network', { method, url, status: 0, duration: `${duration}ms`, ok: false, error: err.message });
+        blackbox._addBreadcrumb('network', { method, url, status: 0, duration, ok: false, error: err.message });
         blackbox._recordError({
           message: `Network error: ${method} ${url} - ${err.message}`,
           stack: err.stack || '',
@@ -36,7 +36,7 @@ export function installNetworkHook(blackbox) {
       const status = response.status;
       const ok = response.ok;
 
-      const crumbData = { method, url, status, duration: `${duration}ms`, ok };
+      const crumbData = { method, url, status, duration, ok };
 
       // Capture bodies only if explicitly enabled
       if (config.captureRequestBodies && config.maxBodyLength > 0) {
@@ -63,7 +63,7 @@ export function installNetworkHook(blackbox) {
           action: 'slow_request',
           method,
           url,
-          duration: `${duration}ms`,
+          duration,
           threshold: config.slowRequestThreshold
         });
       }

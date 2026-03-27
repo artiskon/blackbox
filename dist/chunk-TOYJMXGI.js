@@ -8,7 +8,7 @@ import {
   getPersistenceConfig,
   initPersistence,
   isCircuitOpen
-} from "./chunk-KLMU2VSX.js";
+} from "./chunk-QHIKVRM4.js";
 
 // src/core/constants.js
 var DEFAULTS = {
@@ -200,7 +200,35 @@ function installConsoleHook(blackbox2) {
   const ignorePatterns = config.consoleIgnorePatterns || [];
   const originalError = console.error.bind(console);
   const originalWarn = console.warn.bind(console);
+  function interpolateFormatString(args) {
+    if (args.length < 2 || typeof args[0] !== "string") return null;
+    const fmt = args[0];
+    if (!/%[sdoOif%]/.test(fmt)) return null;
+    let i = 1;
+    const result = fmt.replace(/%([sdoOif%])/g, (match, type) => {
+      if (type === "%") return "%";
+      if (i >= args.length) return match;
+      const val = args[i++];
+      if (type === "s") return String(val);
+      if (type === "d" || type === "i" || type === "f") return Number(val);
+      if (type === "o" || type === "O") {
+        try {
+          return JSON.stringify(val);
+        } catch (e) {
+          return String(val);
+        }
+      }
+      return String(val);
+    });
+    const remaining = args.slice(i);
+    if (remaining.length > 0) {
+      return (result + " " + remaining.map((a) => typeof a === "string" ? a : String(a)).join(" ")).slice(0, config.maxMessageLength);
+    }
+    return result.slice(0, config.maxMessageLength);
+  }
   function stringifyArgs(args) {
+    const interpolated = interpolateFormatString(args);
+    if (interpolated !== null) return interpolated;
     return args.map((a) => {
       if (typeof a === "string") return a;
       try {
@@ -260,7 +288,7 @@ function installNetworkHook(blackbox2) {
     } catch (err) {
       try {
         const duration = Date.now() - start;
-        blackbox2._addBreadcrumb("network", { method, url, status: 0, duration: `${duration}ms`, ok: false, error: err.message });
+        blackbox2._addBreadcrumb("network", { method, url, status: 0, duration, ok: false, error: err.message });
         blackbox2._recordError({
           message: `Network error: ${method} ${url} - ${err.message}`,
           stack: err.stack || "",
@@ -275,7 +303,7 @@ function installNetworkHook(blackbox2) {
       const duration = Date.now() - start;
       const status = response.status;
       const ok = response.ok;
-      const crumbData = { method, url, status, duration: `${duration}ms`, ok };
+      const crumbData = { method, url, status, duration, ok };
       if (config.captureRequestBodies && config.maxBodyLength > 0) {
         try {
           if (init.body) {
@@ -298,7 +326,7 @@ function installNetworkHook(blackbox2) {
           action: "slow_request",
           method,
           url,
-          duration: `${duration}ms`,
+          duration,
           threshold: config.slowRequestThreshold
         });
       }
@@ -620,7 +648,7 @@ var blackbox = {
   // --- Firestore query methods for the UI panel ---
   async queryPersistedErrors(limit = 50) {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-M2ZLOEP7.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-7SEQU47J.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { errors: [], connected: false };
@@ -646,7 +674,7 @@ var blackbox = {
   },
   async queryHealth() {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-M2ZLOEP7.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-7SEQU47J.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { connected: false };
@@ -684,7 +712,7 @@ var blackbox = {
   },
   async queryTimeline(minutes = 5) {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-M2ZLOEP7.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-7SEQU47J.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { events: [], connected: false };
@@ -713,7 +741,7 @@ var blackbox = {
   },
   async clearPersistedErrors() {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-M2ZLOEP7.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-7SEQU47J.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { success: false, error: "Not connected to Firestore" };

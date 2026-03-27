@@ -155,8 +155,11 @@ async function _doWrite(errorEntry) {
       if (!snapshot.empty) {
         existingDoc = snapshot.docs[0];
       }
-    } catch {
-      // Dedup query failed — fall through to create new doc
+    } catch (dedupErr) {
+      // Dedup query failed — likely missing composite index on Cloud Firestore
+      if (dedupErr?.message?.includes('index')) {
+        console.warn('[BlackBox] Deduplication query failed — a Firestore composite index is required. Errors will be stored without dedup until the index is created. See: https://github.com/artiskon/blackbox#firestore-indexes');
+      }
       existingDoc = null;
     }
 

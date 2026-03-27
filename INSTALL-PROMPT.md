@@ -39,10 +39,16 @@ Install and set up BlackBox error monitoring in this app. Follow these steps exa
    - IF CLOUD FIRESTORE: Ask the user before modifying any rules. NEVER add open rules.
    - IF UNSURE: Ask the user.
 
-9. Add the BlackBox debugging workflow to CLAUDE.md:
+9. FIRESTORE INDEXES (Cloud Firestore only, skip if using emulator):
+   - Read the "Firestore Indexes" section in node_modules/@artiskon/blackbox/README.md
+   - Add the indexes to the project's firestore.indexes.json
+   - Deploy with: firebase deploy --only firestore:indexes
+   - Without these indexes, error deduplication and CLI queries will fail silently
+
+10. Add the BlackBox debugging workflow to CLAUDE.md:
    - Read CLAUDEMD-SNIPPET.md inside node_modules/@artiskon/blackbox/ and paste its contents into CLAUDE.md (create if needed)
 
-10. Verify setup:
+11. Verify setup:
     - Open the app in browser
     - A green circle with "0" should appear at bottom-right
     - Click it to open the BlackBox panel
