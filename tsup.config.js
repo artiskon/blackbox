@@ -1,7 +1,7 @@
 import { defineConfig } from 'tsup';
 
 export default defineConfig([
-  // Main entry (core blackbox) — no 'use client' needed
+  // Main entry (core blackbox)
   {
     entry: { 'index': 'src/index.js' },
     format: ['esm'],
@@ -12,6 +12,7 @@ export default defineConfig([
     external: ['react', 'react-dom', 'firebase', 'firebase/firestore', 'firebase/auth'],
     esbuildOptions(options) {
       options.loader = { '.js': 'jsx' };
+      options.jsx = 'automatic';
     },
   },
   // Components — needs 'use client'
@@ -25,9 +26,10 @@ export default defineConfig([
     banner: { js: "'use client';" },
     esbuildOptions(options) {
       options.loader = { '.js': 'jsx' };
+      options.jsx = 'automatic';
     },
   },
-  // Firebase hooks — no 'use client' needed
+  // Firebase hooks
   {
     entry: { 'firebase': 'src/core/hooks/firebaseHook.js' },
     format: ['esm'],
@@ -37,6 +39,7 @@ export default defineConfig([
     external: ['react', 'react-dom', 'firebase', 'firebase/firestore', 'firebase/auth'],
     esbuildOptions(options) {
       options.loader = { '.js': 'jsx' };
+      options.jsx = 'automatic';
     },
   },
 ]);

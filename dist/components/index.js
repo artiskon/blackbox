@@ -1257,6 +1257,7 @@ var blackbox = {
 var blackbox_default = blackbox;
 
 // src/components/BlackBoxPanel.js
+import { Fragment, jsx, jsxs } from "react/jsx-runtime";
 function timeAgo(isoString) {
   if (!isoString) return "";
   const diff = Date.now() - new Date(isoString).getTime();
@@ -1407,7 +1408,7 @@ function BlackBoxPanel() {
   else if (errorCount >= 1) badgeBg = "#f59e0b";
   const badgeText = errorCount > 99 ? "99+" : String(errorCount);
   if (!isOpen) {
-    return /* @__PURE__ */ React.createElement("div", { onClick: () => setIsOpen(true), style: {
+    return /* @__PURE__ */ jsxs("div", { onClick: () => setIsOpen(true), style: {
       position: "fixed",
       bottom: "16px",
       right: "16px",
@@ -1426,10 +1427,14 @@ function BlackBoxPanel() {
       fontFamily: "system-ui, sans-serif",
       userSelect: "none",
       lineHeight: 1
-    } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: errorCount > 99 ? "11px" : "16px", fontWeight: "bold" } }, badgeText), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "8px", opacity: 0.9, marginTop: "1px" } }, "BB"), hasSilences && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", top: "-2px", right: "-2px", width: "10px", height: "10px", borderRadius: "50%", background: "#facc15", border: "2px solid white" } }));
+    }, children: [
+      /* @__PURE__ */ jsx("span", { style: { fontSize: errorCount > 99 ? "11px" : "16px", fontWeight: "bold" }, children: badgeText }),
+      /* @__PURE__ */ jsx("span", { style: { fontSize: "8px", opacity: 0.9, marginTop: "1px" }, children: "BB" }),
+      hasSilences && /* @__PURE__ */ jsx("div", { style: { position: "absolute", top: "-2px", right: "-2px", width: "10px", height: "10px", borderRadius: "50%", background: "#facc15", border: "2px solid white" } })
+    ] });
   }
   const panelWidth = typeof window !== "undefined" && window.innerWidth < 480 ? "calc(100vw - 16px)" : "400px";
-  return /* @__PURE__ */ React.createElement("div", { style: {
+  return /* @__PURE__ */ jsxs("div", { style: {
     position: "fixed",
     bottom: "16px",
     right: "8px",
@@ -1446,59 +1451,224 @@ function BlackBoxPanel() {
     display: "flex",
     flexDirection: "column",
     overflow: "hidden"
-  } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.1)", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("span", { style: { fontWeight: "bold", fontSize: "13px", color: "white" } }, "BlackBox"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "10px", color: "#666" } }, isConnected ? "DB connected" : "Local only"), /* @__PURE__ */ React.createElement("span", { onClick: () => setIsOpen(false), style: { cursor: "pointer", fontSize: "16px", color: "#999", padding: "4px 8px", marginRight: "-8px", borderRadius: "4px" } }, "\u2715")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", borderBottom: "1px solid rgba(255,255,255,0.1)", flexShrink: 0, padding: "0 6px" } }, ["live", "history", "health"].map((t) => /* @__PURE__ */ React.createElement(
-    "button",
-    {
-      key: t,
-      onClick: () => {
-        setTab(t);
-        if (t === "history" && !historyLoaded) loadHistory();
-        if (t === "health" && !health) loadHealth();
+  }, children: [
+    /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.1)", flexShrink: 0 }, children: [
+      /* @__PURE__ */ jsx("span", { style: { fontWeight: "bold", fontSize: "13px", color: "white" }, children: "BlackBox" }),
+      /* @__PURE__ */ jsx("span", { style: { fontSize: "10px", color: "#666" }, children: isConnected ? "DB connected" : "Local only" }),
+      /* @__PURE__ */ jsx("span", { onClick: () => setIsOpen(false), style: { cursor: "pointer", fontSize: "16px", color: "#999", padding: "4px 8px", marginRight: "-8px", borderRadius: "4px" }, children: "\u2715" })
+    ] }),
+    /* @__PURE__ */ jsx("div", { style: { display: "flex", borderBottom: "1px solid rgba(255,255,255,0.1)", flexShrink: 0, padding: "0 6px" }, children: ["live", "history", "health"].map((t) => /* @__PURE__ */ jsx(
+      "button",
+      {
+        onClick: () => {
+          setTab(t);
+          if (t === "history" && !historyLoaded) loadHistory();
+          if (t === "health" && !health) loadHealth();
+        },
+        onMouseEnter: () => setHoveredTab(t),
+        onMouseLeave: () => setHoveredTab(null),
+        style: tabStyle(tab === t, hoveredTab === t),
+        children: t.charAt(0).toUpperCase() + t.slice(1)
       },
-      onMouseEnter: () => setHoveredTab(t),
-      onMouseLeave: () => setHoveredTab(null),
-      style: tabStyle(tab === t, hoveredTab === t)
-    },
-    t.charAt(0).toUpperCase() + t.slice(1)
-  ))), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, overflowY: "auto", minHeight: 0 } }, tab === "live" && /* @__PURE__ */ React.createElement("div", null, [...errors].reverse().length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { padding: "24px 14px", textAlign: "center", color: "#22c55e" } }, "No errors captured") : [...errors].reverse().map((err, i) => {
-    var _a;
-    const isExpanded = expandedError === i;
-    const last5 = (err.breadcrumbs || []).slice(-5);
-    return /* @__PURE__ */ React.createElement("div", { key: i }, /* @__PURE__ */ React.createElement("div", { onClick: () => setExpandedError(isExpanded ? null : i), style: { padding: "8px 14px", cursor: "pointer", borderBottom: "1px solid rgba(255,255,255,0.05)", background: isExpanded ? "rgba(255,255,255,0.05)" : "transparent" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: "10px", padding: "1px 6px", borderRadius: "3px", background: sourceColor(err.source), color: "white", fontWeight: "bold", textTransform: "uppercase", flexShrink: 0 } }, err.source || "error"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "10px", opacity: 0.4, marginLeft: "auto", flexShrink: 0 } }, timeAgo((_a = err.metadata) == null ? void 0 : _a.timestamp))), /* @__PURE__ */ React.createElement("div", { style: { color: "#ccc", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, (err.message || "").slice(0, 80))), isExpanded && last5.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { padding: "6px 14px 10px 24px", background: "rgba(0,0,0,0.2)", borderBottom: "1px solid rgba(255,255,255,0.05)" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "10px", color: "#888", marginBottom: "4px" } }, "Last ", last5.length, " steps before error:"), last5.map((bc, j) => /* @__PURE__ */ React.createElement("div", { key: j, style: { fontSize: "11px", color: "#aaa", padding: "2px 0", display: "flex", gap: "6px" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "#666", flexShrink: 0, width: "70px" } }, bcTypeLabel(bc.type)), /* @__PURE__ */ React.createElement("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, bcSummary(bc))))));
-  }), hasSilences && /* @__PURE__ */ React.createElement("div", { style: { borderTop: "1px solid rgba(255,255,255,0.1)", padding: "8px 14px" } }, /* @__PURE__ */ React.createElement("div", { style: { color: "#facc15", fontSize: "11px", fontWeight: "bold", marginBottom: "2px" } }, "Unresponsive clicks detected"), /* @__PURE__ */ React.createElement("div", { style: { color: "#888", fontSize: "10px", marginBottom: "6px" } }, "These buttons/links were clicked but nothing happened \u2014 they may be broken or missing handlers."), silences.slice(0, 5).map((s, i) => {
-    var _a, _b, _c;
-    return /* @__PURE__ */ React.createElement("div", { key: i, style: { fontSize: "11px", color: "#aaa", padding: "2px 0" } }, ((_a = s.clickedElement) == null ? void 0 : _a.tag) || "element", ((_b = s.clickedElement) == null ? void 0 : _b.id) ? `#${s.clickedElement.id}` : "", ((_c = s.clickedElement) == null ? void 0 : _c.text) ? ` "${s.clickedElement.text.slice(0, 20)}"` : "");
-  }))), tab === "history" && /* @__PURE__ */ React.createElement("div", null, !isConnected ? /* @__PURE__ */ React.createElement("div", { style: { padding: "24px 14px", textAlign: "center", color: "#888" } }, /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "8px" } }, "No database connected"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "11px", color: "#666" } }, "Error history is only available when BlackBox is set up with a database. Errors are still being tracked in this session.")) : historyLoading ? /* @__PURE__ */ React.createElement("div", { style: { padding: "24px 14px", textAlign: "center", color: "#888" } }, "Loading...") : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { padding: "8px 14px", display: "flex", gap: "8px", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.05)" } }, /* @__PURE__ */ React.createElement("button", { onClick: loadHistory, style: __spreadProps(__spreadValues({}, loadBtn), { padding: "4px 12px", fontSize: "11px" }) }, "Refresh"), /* @__PURE__ */ React.createElement("button", { onClick: loadTimeline, style: __spreadProps(__spreadValues({}, loadBtn), { padding: "4px 12px", fontSize: "11px", background: "#8b5cf6" }) }, timelineLoading ? "Loading..." : "Timeline"), /* @__PURE__ */ React.createElement(
-    "select",
-    {
-      value: timelineMinutes,
-      onChange: (e) => setTimelineMinutes(Number(e.target.value)),
-      style: {
-        background: "rgba(255,255,255,0.1)",
-        color: "#ccc",
-        border: "1px solid rgba(255,255,255,0.15)",
-        borderRadius: "4px",
-        padding: "3px 4px",
-        fontSize: "10px",
-        cursor: "pointer"
-      }
-    },
-    /* @__PURE__ */ React.createElement("option", { value: 5 }, "5m"),
-    /* @__PURE__ */ React.createElement("option", { value: 10 }, "10m"),
-    /* @__PURE__ */ React.createElement("option", { value: 30 }, "30m"),
-    /* @__PURE__ */ React.createElement("option", { value: 60 }, "1h")
-  )), deleteSuccess && /* @__PURE__ */ React.createElement("div", { style: { padding: "8px 14px", textAlign: "center", color: "#22c55e", fontSize: "11px", background: "rgba(34,197,94,0.1)" } }, "All saved errors deleted successfully."), historyErrors.length === 0 && !timelineLoaded && timeline.length === 0 ? /* @__PURE__ */ React.createElement("div", { style: { padding: "24px 14px", textAlign: "center", color: "#22c55e" } }, "No saved errors") : /* @__PURE__ */ React.createElement(React.Fragment, null, historyErrors.length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: sectionTitle }, "Saved Errors (", historyErrors.length, ")"), historyErrors.map((err, i) => {
-    const isExp = expandedHistory === i;
-    const last5 = (err.breadcrumbs || []).slice(-5);
-    return /* @__PURE__ */ React.createElement("div", { key: i }, /* @__PURE__ */ React.createElement("div", { onClick: () => setExpandedHistory(isExp ? null : i), style: { padding: "8px 14px", cursor: "pointer", borderBottom: "1px solid rgba(255,255,255,0.05)", background: isExp ? "rgba(255,255,255,0.05)" : "transparent" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: "10px", padding: "1px 6px", borderRadius: "3px", background: sourceColor(err.source), color: "white", fontWeight: "bold", textTransform: "uppercase", flexShrink: 0 } }, err.source || "error"), (err.occurrences || 1) > 1 && /* @__PURE__ */ React.createElement("span", { style: { fontSize: "10px", padding: "1px 5px", borderRadius: "3px", background: "rgba(255,255,255,0.15)", color: "#ccc", flexShrink: 0 } }, "x", err.occurrences), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "10px", opacity: 0.4, marginLeft: "auto", flexShrink: 0 } }, timeAgo(err.lastSeen))), /* @__PURE__ */ React.createElement("div", { style: { color: "#ccc", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, (err.message || "").slice(0, 80))), isExp && last5.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { padding: "6px 14px 10px 24px", background: "rgba(0,0,0,0.2)", borderBottom: "1px solid rgba(255,255,255,0.05)" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "10px", color: "#888", marginBottom: "4px" } }, "Last ", last5.length, " steps before error:"), last5.map((bc, j) => /* @__PURE__ */ React.createElement("div", { key: j, style: { fontSize: "11px", color: "#aaa", padding: "2px 0", display: "flex", gap: "6px" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "#666", flexShrink: 0, width: "70px" } }, bcTypeLabel(bc.type)), /* @__PURE__ */ React.createElement("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, bcSummary(bc))))));
-  })), timeline.length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: sectionTitle }, "Timeline (", timeline.length, " events", timeline.length > 30 ? " \u2014 showing last 30" : "", ")"), timeline.slice(-30).map((ev, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { padding: "4px 14px", display: "flex", gap: "8px", fontSize: "11px", borderBottom: "1px solid rgba(255,255,255,0.03)" } }, /* @__PURE__ */ React.createElement("span", { style: { color: "#555", flexShrink: 0, width: "55px" } }, new Date(ev.timestamp).toLocaleTimeString()), /* @__PURE__ */ React.createElement("span", { style: { color: "#777", flexShrink: 0, width: "65px" } }, bcTypeLabel(ev.type)), /* @__PURE__ */ React.createElement("span", { style: { color: "#aaa", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, bcSummary(ev))))), timelineLoaded && timeline.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { padding: "12px 14px", textAlign: "center", color: "#888", fontSize: "11px" } }, "No activity recorded in the last ", timelineMinutes, " minutes.")))), tab === "health" && /* @__PURE__ */ React.createElement("div", { style: { padding: "12px 14px" } }, !isConnected ? /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", color: "#888", padding: "12px 0" } }, /* @__PURE__ */ React.createElement("div", { style: { marginBottom: "8px" } }, "No database connected"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "11px", color: "#666" } }, "Health data requires a database connection. Errors are still tracked locally.")) : healthLoading ? /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", color: "#888", padding: "24px 0" } }, "Loading...") : !health ? /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", padding: "24px 0" } }, /* @__PURE__ */ React.createElement("button", { onClick: loadHealth, style: loadBtn }, "Check Health")) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", padding: "16px 0", marginBottom: "12px", borderRadius: "8px", background: "rgba(255,255,255,0.03)" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "24px", fontWeight: "bold", color: verdictColor(health.verdict) } }, health.verdict), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "11px", color: "#888", marginTop: "4px" } }, "Last 24 hours")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "8px", marginBottom: "12px" } }, /* @__PURE__ */ React.createElement("div", { style: statBox() }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "20px", fontWeight: "bold", color: "#ccc" } }, health.uniqueErrors), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "10px", color: "#888" } }, "Unique")), /* @__PURE__ */ React.createElement("div", { style: statBox() }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "20px", fontWeight: "bold", color: "#ccc" } }, health.totalOccurrences), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "10px", color: "#888" } }, "Total")), /* @__PURE__ */ React.createElement("div", { style: statBox() }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "20px", fontWeight: "bold", color: "#ccc" } }, health.systemicCount), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "10px", color: "#888" } }, "Repeated 10+"))), health.bySource && Object.keys(health.bySource).length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: sectionTitle }, "By Source"), Object.entries(health.bySource).map(([src, count]) => /* @__PURE__ */ React.createElement("div", { key: src, style: { display: "flex", justifyContent: "space-between", padding: "4px 14px", fontSize: "11px" } }, /* @__PURE__ */ React.createElement("span", { style: { color: sourceColor(src) } }, src), /* @__PURE__ */ React.createElement("span", { style: { color: "#888" } }, count)))), health.topErrors && health.topErrors.length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: __spreadProps(__spreadValues({}, sectionTitle), { marginTop: "8px" }) }, "Top Errors"), health.topErrors.map((err, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { padding: "6px 14px", borderBottom: "1px solid rgba(255,255,255,0.03)" } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "8px", alignItems: "center", marginBottom: "2px" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: "10px", padding: "1px 6px", borderRadius: "3px", background: sourceColor(err.source), color: "white", fontWeight: "bold", textTransform: "uppercase" } }, err.source), /* @__PURE__ */ React.createElement("span", { style: { fontSize: "10px", color: "#888", marginLeft: "auto" } }, "x", err.occurrences)), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "11px", color: "#aaa", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, (err.message || "").slice(0, 70))))), /* @__PURE__ */ React.createElement("div", { style: { textAlign: "center", marginTop: "12px" } }, /* @__PURE__ */ React.createElement("button", { onClick: loadHealth, style: __spreadProps(__spreadValues({}, loadBtn), { padding: "4px 12px", fontSize: "11px" }) }, "Refresh"))))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 14px", borderTop: "1px solid rgba(255,255,255,0.1)", flexShrink: 0 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: "11px", opacity: 0.6 } }, tab === "live" ? `${errorCount} error${errorCount !== 1 ? "s" : ""} this session` : tab === "history" ? `${historyErrors.length} saved` : health ? health.verdict : "Health"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "6px", alignItems: "center" } }, tab === "live" && (clearSessionFeedback ? /* @__PURE__ */ React.createElement("span", { style: { fontSize: "11px", color: "#22c55e", padding: "2px 8px" } }, "Cleared!") : /* @__PURE__ */ React.createElement("span", { onClick: handleClearSession, style: { cursor: "pointer", fontSize: "11px", color: "#999", padding: "2px 8px", borderRadius: "3px", border: "1px solid rgba(255,255,255,0.15)" } }, "Clear Session")), tab === "history" && isConnected && /* @__PURE__ */ React.createElement("span", { onClick: () => setShowClearConfirm(true), style: { cursor: "pointer", fontSize: "11px", color: "#ef4444", padding: "2px 8px", borderRadius: "3px", border: "1px solid rgba(239,68,68,0.3)" } }, "Delete All"))), showClearConfirm && /* @__PURE__ */ React.createElement("div", { style: { position: "absolute", inset: 0, background: "rgba(0,0,0,0.85)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", borderRadius: "12px", padding: "24px", gap: "16px" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: "14px", color: "white", fontWeight: "bold", textAlign: "center" } }, "Delete all saved errors?"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: "12px", color: "#999", textAlign: "center" } }, "This permanently removes all error data from the database. This cannot be undone."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "12px", marginTop: "8px" } }, /* @__PURE__ */ React.createElement("button", { onClick: () => setShowClearConfirm(false), style: cancelBtn }, "Cancel"), /* @__PURE__ */ React.createElement("button", { onClick: handleClearPersisted, disabled: clearing, style: dangerBtn }, clearing ? "Deleting..." : "Yes, Delete All"))));
+      t
+    )) }),
+    /* @__PURE__ */ jsxs("div", { style: { flex: 1, overflowY: "auto", minHeight: 0 }, children: [
+      tab === "live" && /* @__PURE__ */ jsxs("div", { children: [
+        [...errors].reverse().length === 0 ? /* @__PURE__ */ jsx("div", { style: { padding: "24px 14px", textAlign: "center", color: "#22c55e" }, children: "No errors captured" }) : [...errors].reverse().map((err, i) => {
+          var _a;
+          const isExpanded = expandedError === i;
+          const last5 = (err.breadcrumbs || []).slice(-5);
+          return /* @__PURE__ */ jsxs("div", { children: [
+            /* @__PURE__ */ jsxs("div", { onClick: () => setExpandedError(isExpanded ? null : i), style: { padding: "8px 14px", cursor: "pointer", borderBottom: "1px solid rgba(255,255,255,0.05)", background: isExpanded ? "rgba(255,255,255,0.05)" : "transparent" }, children: [
+              /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }, children: [
+                /* @__PURE__ */ jsx("span", { style: { fontSize: "10px", padding: "1px 6px", borderRadius: "3px", background: sourceColor(err.source), color: "white", fontWeight: "bold", textTransform: "uppercase", flexShrink: 0 }, children: err.source || "error" }),
+                /* @__PURE__ */ jsx("span", { style: { fontSize: "10px", opacity: 0.4, marginLeft: "auto", flexShrink: 0 }, children: timeAgo((_a = err.metadata) == null ? void 0 : _a.timestamp) })
+              ] }),
+              /* @__PURE__ */ jsx("div", { style: { color: "#ccc", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: (err.message || "").slice(0, 80) })
+            ] }),
+            isExpanded && last5.length > 0 && /* @__PURE__ */ jsxs("div", { style: { padding: "6px 14px 10px 24px", background: "rgba(0,0,0,0.2)", borderBottom: "1px solid rgba(255,255,255,0.05)" }, children: [
+              /* @__PURE__ */ jsxs("div", { style: { fontSize: "10px", color: "#888", marginBottom: "4px" }, children: [
+                "Last ",
+                last5.length,
+                " steps before error:"
+              ] }),
+              last5.map((bc, j) => /* @__PURE__ */ jsxs("div", { style: { fontSize: "11px", color: "#aaa", padding: "2px 0", display: "flex", gap: "6px" }, children: [
+                /* @__PURE__ */ jsx("span", { style: { color: "#666", flexShrink: 0, width: "70px" }, children: bcTypeLabel(bc.type) }),
+                /* @__PURE__ */ jsx("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: bcSummary(bc) })
+              ] }, j))
+            ] })
+          ] }, i);
+        }),
+        hasSilences && /* @__PURE__ */ jsxs("div", { style: { borderTop: "1px solid rgba(255,255,255,0.1)", padding: "8px 14px" }, children: [
+          /* @__PURE__ */ jsx("div", { style: { color: "#facc15", fontSize: "11px", fontWeight: "bold", marginBottom: "2px" }, children: "Unresponsive clicks detected" }),
+          /* @__PURE__ */ jsx("div", { style: { color: "#888", fontSize: "10px", marginBottom: "6px" }, children: "These buttons/links were clicked but nothing happened \u2014 they may be broken or missing handlers." }),
+          silences.slice(0, 5).map((s, i) => {
+            var _a, _b, _c;
+            return /* @__PURE__ */ jsxs("div", { style: { fontSize: "11px", color: "#aaa", padding: "2px 0" }, children: [
+              ((_a = s.clickedElement) == null ? void 0 : _a.tag) || "element",
+              ((_b = s.clickedElement) == null ? void 0 : _b.id) ? `#${s.clickedElement.id}` : "",
+              ((_c = s.clickedElement) == null ? void 0 : _c.text) ? ` "${s.clickedElement.text.slice(0, 20)}"` : ""
+            ] }, i);
+          })
+        ] })
+      ] }),
+      tab === "history" && /* @__PURE__ */ jsx("div", { children: !isConnected ? /* @__PURE__ */ jsxs("div", { style: { padding: "24px 14px", textAlign: "center", color: "#888" }, children: [
+        /* @__PURE__ */ jsx("div", { style: { marginBottom: "8px" }, children: "No database connected" }),
+        /* @__PURE__ */ jsx("div", { style: { fontSize: "11px", color: "#666" }, children: "Error history is only available when BlackBox is set up with a database. Errors are still being tracked in this session." })
+      ] }) : historyLoading ? /* @__PURE__ */ jsx("div", { style: { padding: "24px 14px", textAlign: "center", color: "#888" }, children: "Loading..." }) : /* @__PURE__ */ jsxs(Fragment, { children: [
+        /* @__PURE__ */ jsxs("div", { style: { padding: "8px 14px", display: "flex", gap: "8px", alignItems: "center", borderBottom: "1px solid rgba(255,255,255,0.05)" }, children: [
+          /* @__PURE__ */ jsx("button", { onClick: loadHistory, style: __spreadProps(__spreadValues({}, loadBtn), { padding: "4px 12px", fontSize: "11px" }), children: "Refresh" }),
+          /* @__PURE__ */ jsx("button", { onClick: loadTimeline, style: __spreadProps(__spreadValues({}, loadBtn), { padding: "4px 12px", fontSize: "11px", background: "#8b5cf6" }), children: timelineLoading ? "Loading..." : "Timeline" }),
+          /* @__PURE__ */ jsxs(
+            "select",
+            {
+              value: timelineMinutes,
+              onChange: (e) => setTimelineMinutes(Number(e.target.value)),
+              style: {
+                background: "rgba(255,255,255,0.1)",
+                color: "#ccc",
+                border: "1px solid rgba(255,255,255,0.15)",
+                borderRadius: "4px",
+                padding: "3px 4px",
+                fontSize: "10px",
+                cursor: "pointer"
+              },
+              children: [
+                /* @__PURE__ */ jsx("option", { value: 5, children: "5m" }),
+                /* @__PURE__ */ jsx("option", { value: 10, children: "10m" }),
+                /* @__PURE__ */ jsx("option", { value: 30, children: "30m" }),
+                /* @__PURE__ */ jsx("option", { value: 60, children: "1h" })
+              ]
+            }
+          )
+        ] }),
+        deleteSuccess && /* @__PURE__ */ jsx("div", { style: { padding: "8px 14px", textAlign: "center", color: "#22c55e", fontSize: "11px", background: "rgba(34,197,94,0.1)" }, children: "All saved errors deleted successfully." }),
+        historyErrors.length === 0 && !timelineLoaded && timeline.length === 0 ? /* @__PURE__ */ jsx("div", { style: { padding: "24px 14px", textAlign: "center", color: "#22c55e" }, children: "No saved errors" }) : /* @__PURE__ */ jsxs(Fragment, { children: [
+          historyErrors.length > 0 && /* @__PURE__ */ jsxs(Fragment, { children: [
+            /* @__PURE__ */ jsxs("div", { style: sectionTitle, children: [
+              "Saved Errors (",
+              historyErrors.length,
+              ")"
+            ] }),
+            historyErrors.map((err, i) => {
+              const isExp = expandedHistory === i;
+              const last5 = (err.breadcrumbs || []).slice(-5);
+              return /* @__PURE__ */ jsxs("div", { children: [
+                /* @__PURE__ */ jsxs("div", { onClick: () => setExpandedHistory(isExp ? null : i), style: { padding: "8px 14px", cursor: "pointer", borderBottom: "1px solid rgba(255,255,255,0.05)", background: isExp ? "rgba(255,255,255,0.05)" : "transparent" }, children: [
+                  /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }, children: [
+                    /* @__PURE__ */ jsx("span", { style: { fontSize: "10px", padding: "1px 6px", borderRadius: "3px", background: sourceColor(err.source), color: "white", fontWeight: "bold", textTransform: "uppercase", flexShrink: 0 }, children: err.source || "error" }),
+                    (err.occurrences || 1) > 1 && /* @__PURE__ */ jsxs("span", { style: { fontSize: "10px", padding: "1px 5px", borderRadius: "3px", background: "rgba(255,255,255,0.15)", color: "#ccc", flexShrink: 0 }, children: [
+                      "x",
+                      err.occurrences
+                    ] }),
+                    /* @__PURE__ */ jsx("span", { style: { fontSize: "10px", opacity: 0.4, marginLeft: "auto", flexShrink: 0 }, children: timeAgo(err.lastSeen) })
+                  ] }),
+                  /* @__PURE__ */ jsx("div", { style: { color: "#ccc", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: (err.message || "").slice(0, 80) })
+                ] }),
+                isExp && last5.length > 0 && /* @__PURE__ */ jsxs("div", { style: { padding: "6px 14px 10px 24px", background: "rgba(0,0,0,0.2)", borderBottom: "1px solid rgba(255,255,255,0.05)" }, children: [
+                  /* @__PURE__ */ jsxs("div", { style: { fontSize: "10px", color: "#888", marginBottom: "4px" }, children: [
+                    "Last ",
+                    last5.length,
+                    " steps before error:"
+                  ] }),
+                  last5.map((bc, j) => /* @__PURE__ */ jsxs("div", { style: { fontSize: "11px", color: "#aaa", padding: "2px 0", display: "flex", gap: "6px" }, children: [
+                    /* @__PURE__ */ jsx("span", { style: { color: "#666", flexShrink: 0, width: "70px" }, children: bcTypeLabel(bc.type) }),
+                    /* @__PURE__ */ jsx("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: bcSummary(bc) })
+                  ] }, j))
+                ] })
+              ] }, i);
+            })
+          ] }),
+          timeline.length > 0 && /* @__PURE__ */ jsxs(Fragment, { children: [
+            /* @__PURE__ */ jsxs("div", { style: sectionTitle, children: [
+              "Timeline (",
+              timeline.length,
+              " events",
+              timeline.length > 30 ? " \u2014 showing last 30" : "",
+              ")"
+            ] }),
+            timeline.slice(-30).map((ev, i) => /* @__PURE__ */ jsxs("div", { style: { padding: "4px 14px", display: "flex", gap: "8px", fontSize: "11px", borderBottom: "1px solid rgba(255,255,255,0.03)" }, children: [
+              /* @__PURE__ */ jsx("span", { style: { color: "#555", flexShrink: 0, width: "55px" }, children: new Date(ev.timestamp).toLocaleTimeString() }),
+              /* @__PURE__ */ jsx("span", { style: { color: "#777", flexShrink: 0, width: "65px" }, children: bcTypeLabel(ev.type) }),
+              /* @__PURE__ */ jsx("span", { style: { color: "#aaa", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: bcSummary(ev) })
+            ] }, i))
+          ] }),
+          timelineLoaded && timeline.length === 0 && /* @__PURE__ */ jsxs("div", { style: { padding: "12px 14px", textAlign: "center", color: "#888", fontSize: "11px" }, children: [
+            "No activity recorded in the last ",
+            timelineMinutes,
+            " minutes."
+          ] })
+        ] })
+      ] }) }),
+      tab === "health" && /* @__PURE__ */ jsx("div", { style: { padding: "12px 14px" }, children: !isConnected ? /* @__PURE__ */ jsxs("div", { style: { textAlign: "center", color: "#888", padding: "12px 0" }, children: [
+        /* @__PURE__ */ jsx("div", { style: { marginBottom: "8px" }, children: "No database connected" }),
+        /* @__PURE__ */ jsx("div", { style: { fontSize: "11px", color: "#666" }, children: "Health data requires a database connection. Errors are still tracked locally." })
+      ] }) : healthLoading ? /* @__PURE__ */ jsx("div", { style: { textAlign: "center", color: "#888", padding: "24px 0" }, children: "Loading..." }) : !health ? /* @__PURE__ */ jsx("div", { style: { textAlign: "center", padding: "24px 0" }, children: /* @__PURE__ */ jsx("button", { onClick: loadHealth, style: loadBtn, children: "Check Health" }) }) : /* @__PURE__ */ jsxs(Fragment, { children: [
+        /* @__PURE__ */ jsxs("div", { style: { textAlign: "center", padding: "16px 0", marginBottom: "12px", borderRadius: "8px", background: "rgba(255,255,255,0.03)" }, children: [
+          /* @__PURE__ */ jsx("div", { style: { fontSize: "24px", fontWeight: "bold", color: verdictColor(health.verdict) }, children: health.verdict }),
+          /* @__PURE__ */ jsx("div", { style: { fontSize: "11px", color: "#888", marginTop: "4px" }, children: "Last 24 hours" })
+        ] }),
+        /* @__PURE__ */ jsxs("div", { style: { display: "flex", gap: "8px", marginBottom: "12px" }, children: [
+          /* @__PURE__ */ jsxs("div", { style: statBox(), children: [
+            /* @__PURE__ */ jsx("div", { style: { fontSize: "20px", fontWeight: "bold", color: "#ccc" }, children: health.uniqueErrors }),
+            /* @__PURE__ */ jsx("div", { style: { fontSize: "10px", color: "#888" }, children: "Unique" })
+          ] }),
+          /* @__PURE__ */ jsxs("div", { style: statBox(), children: [
+            /* @__PURE__ */ jsx("div", { style: { fontSize: "20px", fontWeight: "bold", color: "#ccc" }, children: health.totalOccurrences }),
+            /* @__PURE__ */ jsx("div", { style: { fontSize: "10px", color: "#888" }, children: "Total" })
+          ] }),
+          /* @__PURE__ */ jsxs("div", { style: statBox(), children: [
+            /* @__PURE__ */ jsx("div", { style: { fontSize: "20px", fontWeight: "bold", color: "#ccc" }, children: health.systemicCount }),
+            /* @__PURE__ */ jsx("div", { style: { fontSize: "10px", color: "#888" }, children: "Repeated 10+" })
+          ] })
+        ] }),
+        health.bySource && Object.keys(health.bySource).length > 0 && /* @__PURE__ */ jsxs(Fragment, { children: [
+          /* @__PURE__ */ jsx("div", { style: sectionTitle, children: "By Source" }),
+          Object.entries(health.bySource).map(([src, count]) => /* @__PURE__ */ jsxs("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 14px", fontSize: "11px" }, children: [
+            /* @__PURE__ */ jsx("span", { style: { color: sourceColor(src) }, children: src }),
+            /* @__PURE__ */ jsx("span", { style: { color: "#888" }, children: count })
+          ] }, src))
+        ] }),
+        health.topErrors && health.topErrors.length > 0 && /* @__PURE__ */ jsxs(Fragment, { children: [
+          /* @__PURE__ */ jsx("div", { style: __spreadProps(__spreadValues({}, sectionTitle), { marginTop: "8px" }), children: "Top Errors" }),
+          health.topErrors.map((err, i) => /* @__PURE__ */ jsxs("div", { style: { padding: "6px 14px", borderBottom: "1px solid rgba(255,255,255,0.03)" }, children: [
+            /* @__PURE__ */ jsxs("div", { style: { display: "flex", gap: "8px", alignItems: "center", marginBottom: "2px" }, children: [
+              /* @__PURE__ */ jsx("span", { style: { fontSize: "10px", padding: "1px 6px", borderRadius: "3px", background: sourceColor(err.source), color: "white", fontWeight: "bold", textTransform: "uppercase" }, children: err.source }),
+              /* @__PURE__ */ jsxs("span", { style: { fontSize: "10px", color: "#888", marginLeft: "auto" }, children: [
+                "x",
+                err.occurrences
+              ] })
+            ] }),
+            /* @__PURE__ */ jsx("div", { style: { fontSize: "11px", color: "#aaa", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: (err.message || "").slice(0, 70) })
+          ] }, i))
+        ] }),
+        /* @__PURE__ */ jsx("div", { style: { textAlign: "center", marginTop: "12px" }, children: /* @__PURE__ */ jsx("button", { onClick: loadHealth, style: __spreadProps(__spreadValues({}, loadBtn), { padding: "4px 12px", fontSize: "11px" }), children: "Refresh" }) })
+      ] }) })
+    ] }),
+    /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 14px", borderTop: "1px solid rgba(255,255,255,0.1)", flexShrink: 0 }, children: [
+      /* @__PURE__ */ jsx("span", { style: { fontSize: "11px", opacity: 0.6 }, children: tab === "live" ? `${errorCount} error${errorCount !== 1 ? "s" : ""} this session` : tab === "history" ? `${historyErrors.length} saved` : health ? health.verdict : "Health" }),
+      /* @__PURE__ */ jsxs("div", { style: { display: "flex", gap: "6px", alignItems: "center" }, children: [
+        tab === "live" && (clearSessionFeedback ? /* @__PURE__ */ jsx("span", { style: { fontSize: "11px", color: "#22c55e", padding: "2px 8px" }, children: "Cleared!" }) : /* @__PURE__ */ jsx("span", { onClick: handleClearSession, style: { cursor: "pointer", fontSize: "11px", color: "#999", padding: "2px 8px", borderRadius: "3px", border: "1px solid rgba(255,255,255,0.15)" }, children: "Clear Session" })),
+        tab === "history" && isConnected && /* @__PURE__ */ jsx("span", { onClick: () => setShowClearConfirm(true), style: { cursor: "pointer", fontSize: "11px", color: "#ef4444", padding: "2px 8px", borderRadius: "3px", border: "1px solid rgba(239,68,68,0.3)" }, children: "Delete All" })
+      ] })
+    ] }),
+    showClearConfirm && /* @__PURE__ */ jsxs("div", { style: { position: "absolute", inset: 0, background: "rgba(0,0,0,0.85)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", borderRadius: "12px", padding: "24px", gap: "16px" }, children: [
+      /* @__PURE__ */ jsx("div", { style: { fontSize: "14px", color: "white", fontWeight: "bold", textAlign: "center" }, children: "Delete all saved errors?" }),
+      /* @__PURE__ */ jsx("div", { style: { fontSize: "12px", color: "#999", textAlign: "center" }, children: "This permanently removes all error data from the database. This cannot be undone." }),
+      /* @__PURE__ */ jsxs("div", { style: { display: "flex", gap: "12px", marginTop: "8px" }, children: [
+        /* @__PURE__ */ jsx("button", { onClick: () => setShowClearConfirm(false), style: cancelBtn, children: "Cancel" }),
+        /* @__PURE__ */ jsx("button", { onClick: handleClearPersisted, disabled: clearing, style: dangerBtn, children: clearing ? "Deleting..." : "Yes, Delete All" })
+      ] })
+    ] })
+  ] });
 }
 function BlackBoxPanelWrapper() {
-  return /* @__PURE__ */ React.createElement(BlackBoxPanel, null);
+  return /* @__PURE__ */ jsx(BlackBoxPanel, {});
 }
 
 // src/components/BlackBoxProvider.js
 import { Component } from "react";
+import { jsx as jsx2, jsxs as jsxs2 } from "react/jsx-runtime";
 var isProduction = typeof process !== "undefined" && process.env && process.env.NODE_ENV === "production";
 var BlackBoxProvider = class extends Component {
   constructor(props) {
@@ -1524,7 +1694,7 @@ var BlackBoxProvider = class extends Component {
       if (this.props.fallback) {
         return this.props.fallback;
       }
-      return /* @__PURE__ */ React.createElement("div", { style: {
+      return /* @__PURE__ */ jsxs2("div", { style: {
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
@@ -1533,35 +1703,42 @@ var BlackBoxProvider = class extends Component {
         background: "#f5f5f5",
         borderRadius: "8px",
         textAlign: "center"
-      } }, /* @__PURE__ */ React.createElement("p", { style: { color: "#333", fontSize: "16px", margin: "0 0 8px 0" } }, "Something went wrong."), /* @__PURE__ */ React.createElement("p", { style: { color: "#333", fontSize: "14px", margin: "0 0 20px 0" } }, "The error has been recorded for debugging."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: "12px" } }, /* @__PURE__ */ React.createElement(
-        "button",
-        {
-          onClick: () => this.setState({ hasError: false, dismissed: false }),
-          style: {
-            padding: "8px 20px",
-            border: "1px solid #999",
-            borderRadius: "4px",
-            background: "white",
-            cursor: "pointer",
-            fontSize: "14px"
-          }
-        },
-        "Try Again"
-      ), /* @__PURE__ */ React.createElement(
-        "button",
-        {
-          onClick: () => this.setState({ dismissed: true }),
-          style: {
-            padding: "8px 20px",
-            border: "1px solid #999",
-            borderRadius: "4px",
-            background: "white",
-            cursor: "pointer",
-            fontSize: "14px"
-          }
-        },
-        "Dismiss"
-      )));
+      }, children: [
+        /* @__PURE__ */ jsx2("p", { style: { color: "#333", fontSize: "16px", margin: "0 0 8px 0" }, children: "Something went wrong." }),
+        /* @__PURE__ */ jsx2("p", { style: { color: "#333", fontSize: "14px", margin: "0 0 20px 0" }, children: "The error has been recorded for debugging." }),
+        /* @__PURE__ */ jsxs2("div", { style: { display: "flex", gap: "12px" }, children: [
+          /* @__PURE__ */ jsx2(
+            "button",
+            {
+              onClick: () => this.setState({ hasError: false, dismissed: false }),
+              style: {
+                padding: "8px 20px",
+                border: "1px solid #999",
+                borderRadius: "4px",
+                background: "white",
+                cursor: "pointer",
+                fontSize: "14px"
+              },
+              children: "Try Again"
+            }
+          ),
+          /* @__PURE__ */ jsx2(
+            "button",
+            {
+              onClick: () => this.setState({ dismissed: true }),
+              style: {
+                padding: "8px 20px",
+                border: "1px solid #999",
+                borderRadius: "4px",
+                background: "white",
+                cursor: "pointer",
+                fontSize: "14px"
+              },
+              children: "Dismiss"
+            }
+          )
+        ] })
+      ] });
     }
     return this.props.children;
   }
