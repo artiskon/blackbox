@@ -49,3 +49,10 @@ Install and set up BlackBox error monitoring in this app. Follow these steps exa
     - Trigger a test error to confirm it captures it
 
 Do NOT modify any BlackBox source files. Just install, wire up, and verify.
+
+## Updating BlackBox
+
+To pull the latest version of BlackBox, run:
+   npm update @tiskon/blackbox
+
+This replaces the package files only. No changes needed to your app's setup code unless told otherwise.
