@@ -1,22 +1,22 @@
 {
   "name": "@artiskon/blackbox",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Dev-time error monitoring and activity recording for React/Firebase apps. Built for AI-assisted debugging.",
   "type": "module",
-  "main": "src/index.js",
-  "types": "src/index.d.ts",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./src/index.d.ts",
-      "import": "./src/index.js"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     },
     "./components": {
-      "types": "./src/components/index.d.ts",
-      "import": "./src/components/index.js"
+      "types": "./dist/components/index.d.ts",
+      "import": "./dist/components/index.js"
     },
     "./firebase": {
-      "types": "./src/core/hooks/firebaseHook.d.ts",
-      "import": "./src/core/hooks/firebaseHook.js"
+      "types": "./dist/firebase.d.ts",
+      "import": "./dist/firebase.js"
     }
   },
   "bin": {
@@ -25,6 +25,9 @@
     "bb-timeline": "./src/cli/bb-timeline.js",
     "bb-clear": "./src/cli/bb-clear.js"
   },
+  "scripts": {
+    "build": "tsup"
+  },
   "sideEffects": false,
   "peerDependencies": {
     "firebase": ">=9.0.0",
@@ -32,16 +35,27 @@
     "react-dom": ">=17.0.0"
   },
   "keywords": [
-    "firebase", "error-tracking", "debugging", "react",
-    "dev-tools", "vibe-coding", "ai-debugging", "blackbox"
+    "firebase",
+    "error-tracking",
+    "debugging",
+    "react",
+    "dev-tools",
+    "vibe-coding",
+    "ai-debugging",
+    "blackbox"
   ],
   "repository": {
     "type": "git",
     "url": "https://github.com/artiskon/blackbox"
   },
   "license": "MIT",
-  "files": ["src/", "CLAUDEMD-SNIPPET.md"],
+  "files": [
+    "dist/",
+    "src/cli/",
+    "CLAUDEMD-SNIPPET.md"
+  ],
   "devDependencies": {
-    "jsdom": "^29.0.1"
+    "jsdom": "^29.0.1",
+    "tsup": "^8.5.1"
   }
 }
