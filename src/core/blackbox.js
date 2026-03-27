@@ -56,9 +56,12 @@ function _getCurrentPath() {
 }
 
 function _notifySubscribers() {
-  for (const cb of _subscribers) {
-    try { cb(); } catch { /* ignore */ }
-  }
+  // Defer to avoid calling setState during React commit phase (SF-10)
+  queueMicrotask(() => {
+    for (const cb of _subscribers) {
+      try { cb(); } catch { /* ignore */ }
+    }
+  });
 }
 
 const blackbox = {

@@ -568,12 +568,14 @@ function _getCurrentPath() {
   }
 }
 function _notifySubscribers() {
-  for (const cb of _subscribers) {
-    try {
-      cb();
-    } catch (e) {
+  queueMicrotask(() => {
+    for (const cb of _subscribers) {
+      try {
+        cb();
+      } catch (e) {
+      }
     }
-  }
+  });
 }
 var blackbox = {
   init(options = {}) {
