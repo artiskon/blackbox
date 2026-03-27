@@ -34,5 +34,5 @@ Each error in `dev-logs/blackbox.json` has:
 
 - Errors with high `occurrences` are systemic, fix those first.
 - Look at the FULL breadcrumb trail. The cause is usually 2-5 actions before the crash.
-- If `dev-logs/` files are empty, run `npm run bb:check` first.
+- If `dev-logs/` files are empty, run `npm run bb:check` first. It creates the `dev-logs/` directory automatically if it doesn't exist.
 - The `__blackbox` Firestore collection is dev-only. Do not use it in app logic.

@@ -301,9 +301,9 @@ const blackbox = {
 
       const snapshot = await fns.getDocs(ref);
       let deleted = 0;
+      const { deleteDoc } = await import('firebase/firestore');
       for (const doc of snapshot.docs) {
         try {
-          const { deleteDoc } = await import('firebase/firestore');
           await deleteDoc(doc.ref);
           deleted++;
         } catch { /* skip */ }
@@ -436,8 +436,8 @@ const blackbox = {
     _pendingSilenceChecks.push(checkId);
   },
 
-  // For testing: reset state
-  _reset() {
+  /** Tear down BlackBox: remove all hooks, clear timers, reset state. Useful for HMR cleanup. */
+  destroy() {
     _initialized = false;
     _config = {};
     _sessionId = null;
@@ -458,6 +458,11 @@ const blackbox = {
     _cleanupFns = [];
     try { _resetPersistence(); } catch { /* ignore */ }
     try { _resetActivityLog(); } catch { /* ignore */ }
+  },
+
+  // For testing: alias
+  _reset() {
+    this.destroy();
   }
 };
 

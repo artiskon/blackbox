@@ -125,6 +125,8 @@ Adding the BlackBox debugging workflow to your project's `CLAUDE.md` file makes 
 
 - **Dev-only by default.** BlackBox disables itself when `NODE_ENV === 'production'`. To override this (e.g. if you test in production builds), pass `enabled: true` in `blackbox.init({ db, enabled: true })`. This forces BlackBox on regardless of `NODE_ENV`. Do not rely on BlackBox for production monitoring — it is designed for development debugging.
 
+- **Health query requires a composite Firestore index.** The first time `queryHealth()` runs on cloud Firestore (not the emulator), it will fail with an error containing a link to create the required index. Click that link to auto-create it. This only needs to be done once per project.
+
 - **Emulator is the recommended Firestore target.** Using cloud Firestore requires authenticated security rules. Never use open rules (`allow read, write: if true`) on a cloud Firestore project.
 
 ## License

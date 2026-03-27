@@ -154,6 +154,9 @@ export interface BlackBox {
 
   /** Check if BlackBox is connected to Firestore */
   isConnectedToFirestore(): boolean;
+
+  /** Tear down BlackBox: remove all hooks, clear timers, reset state. Useful for HMR cleanup. */
+  destroy(): void;
 }
 
 declare const blackbox: BlackBox;
