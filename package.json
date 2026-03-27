@@ -30,7 +30,7 @@
     "url": "https://github.com/artiskon/blackbox"
   },
   "license": "MIT",
-  "files": ["src/"],
+  "files": ["src/", "CLAUDEMD-SNIPPET.md"],
   "devDependencies": {
     "jsdom": "^29.0.1"
   }
