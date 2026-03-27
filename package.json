@@ -6,9 +6,18 @@
   "main": "src/index.js",
   "types": "src/index.d.ts",
   "exports": {
-    ".": "./src/index.js",
-    "./components": "./src/components/index.js",
-    "./firebase": "./src/core/hooks/firebaseHook.js"
+    ".": {
+      "types": "./src/index.d.ts",
+      "import": "./src/index.js"
+    },
+    "./components": {
+      "types": "./src/components/index.d.ts",
+      "import": "./src/components/index.js"
+    },
+    "./firebase": {
+      "types": "./src/core/hooks/firebaseHook.d.ts",
+      "import": "./src/core/hooks/firebaseHook.js"
+    }
   },
   "bin": {
     "bb-check": "./src/cli/bb-check.js",
