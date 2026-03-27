@@ -1,11 +1,11 @@
 'use client';
 import {
   blackbox_default
-} from "./chunk-TOYJMXGI.js";
+} from "./chunk-RVCW6GKR.js";
 import {
   __spreadProps,
   __spreadValues
-} from "./chunk-QHIKVRM4.js";
+} from "./chunk-L4KSGTZC.js";
 
 // src/components/BlackBoxPanel.js
 import { useState, useEffect, useCallback } from "react";

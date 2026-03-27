@@ -140,15 +140,12 @@ async function _doWrite(errorEntry) {
       errorEntry.stack
     );
 
-    // Deduplication: check for existing error with same fingerprint in last 24h
+    // Deduplication: check for existing error with same fingerprint
     let existingDoc = null;
     try {
-      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
       const dedupQuery = fns.query(
         _collectionRef,
         fns.where('fingerprint', '==', fingerprint),
-        fns.where('type', '==', 'error'),
-        fns.where('createdAt', '>=', fns.Timestamp.fromDate(twentyFourHoursAgo)),
         fns.limit(1)
       );
       const snapshot = await fns.getDocs(dedupQuery);
@@ -156,10 +153,7 @@ async function _doWrite(errorEntry) {
         existingDoc = snapshot.docs[0];
       }
     } catch (dedupErr) {
-      // Dedup query failed — likely missing composite index on Cloud Firestore
-      if (dedupErr?.message?.includes('index')) {
-        console.warn('[BlackBox] Deduplication query failed — a Firestore composite index is required. Errors will be stored without dedup until the index is created. See: https://github.com/artiskon/blackbox#firestore-indexes');
-      }
+      // Dedup query failed — fall through to create new doc
       existingDoc = null;
     }
 

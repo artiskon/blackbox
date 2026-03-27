@@ -211,7 +211,6 @@ async function _processQueue() {
   _processing = false;
 }
 async function _doWrite(errorEntry) {
-  var _a;
   _writingError = true;
   try {
     const fns = await getFirestoreFns();
@@ -224,12 +223,9 @@ async function _doWrite(errorEntry) {
     );
     let existingDoc = null;
     try {
-      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1e3);
       const dedupQuery = fns.query(
         _collectionRef,
         fns.where("fingerprint", "==", fingerprint),
-        fns.where("type", "==", "error"),
-        fns.where("createdAt", ">=", fns.Timestamp.fromDate(twentyFourHoursAgo)),
         fns.limit(1)
       );
       const snapshot = await fns.getDocs(dedupQuery);
@@ -237,9 +233,6 @@ async function _doWrite(errorEntry) {
         existingDoc = snapshot.docs[0];
       }
     } catch (dedupErr) {
-      if ((_a = dedupErr == null ? void 0 : dedupErr.message) == null ? void 0 : _a.includes("index")) {
-        console.warn("[BlackBox] Deduplication query failed \u2014 a Firestore composite index is required. Errors will be stored without dedup until the index is created. See: https://github.com/artiskon/blackbox#firestore-indexes");
-      }
       existingDoc = null;
     }
     if (existingDoc) {
