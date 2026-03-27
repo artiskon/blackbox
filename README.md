@@ -1,4 +1,4 @@
-# @tiskon/blackbox
+# @artiskon/blackbox
 
 Dev-time error monitoring and activity recording for React/Firebase apps. BlackBox captures errors, user actions, and network activity during development and stores structured logs in Firestore. Designed for AI-assisted debugging — every error includes a breadcrumb trail showing exactly what the user did before the crash.
 
@@ -9,8 +9,8 @@ npm install github:artiskon/blackbox
 ```
 
 ```javascript
-import blackbox from '@tiskon/blackbox';
-import { BlackBoxProvider, BlackBoxPanel } from '@tiskon/blackbox/components';
+import blackbox from '@artiskon/blackbox';
+import { BlackBoxProvider, BlackBoxPanel } from '@artiskon/blackbox/components';
 import { db } from './firebase';
 
 blackbox.init({ db });
@@ -41,7 +41,7 @@ Add these scripts to your `package.json`:
 ## Firebase Auth Tracking (Optional)
 
 ```javascript
-import { bbTrackAuth } from '@tiskon/blackbox/firebase';
+import { bbTrackAuth } from '@artiskon/blackbox/firebase';
 import { auth } from './firebase';
 
 bbTrackAuth(auth);
@@ -61,7 +61,7 @@ bbTrackAuth(auth);
 Log business-specific events that appear in breadcrumb trails:
 
 ```javascript
-import blackbox from '@tiskon/blackbox';
+import blackbox from '@artiskon/blackbox';
 
 blackbox.log('checkout_started', { cartItems: 3 });
 blackbox.log('payment_submitted', { method: 'stripe' });
