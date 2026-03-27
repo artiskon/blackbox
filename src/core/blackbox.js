@@ -63,6 +63,9 @@ function _notifySubscribers() {
 
 const blackbox = {
   init(options = {}) {
+    // SSR guard — no-op on server
+    if (typeof window === 'undefined') return blackbox;
+
     if (_initialized) {
       console.warn('[BlackBox] Already initialized, skipping');
       return blackbox;
@@ -80,6 +83,11 @@ const blackbox = {
           return blackbox;
         }
       } catch { /* process not available, continue */ }
+    }
+
+    // Validate db if provided
+    if (options.db && typeof options.db !== 'object') {
+      console.error('[BlackBox] init() `db` must be a Firestore instance. Got:', typeof options.db);
     }
 
     _config = { ...DEFAULTS, ...options };
@@ -179,7 +187,9 @@ const blackbox = {
     }
 
     blackbox._addBreadcrumb('system', { action: 'blackbox_initialized', sessionId: _sessionId });
-    console.log(`[BlackBox] Active | session: ${_sessionId}`);
+    const env = _config.environment || 'default';
+    const dbStatus = _config.db ? 'Firestore connected' : 'local only';
+    console.log(`[BlackBox] Active | ${dbStatus} | env: ${env} | session: ${_sessionId}`);
 
     return blackbox;
   },

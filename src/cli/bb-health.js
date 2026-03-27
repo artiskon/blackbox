@@ -127,7 +127,14 @@ async function main() {
 
     process.exit(0);
   } catch (e) {
-    console.error(`[BlackBox] bb-health failed: ${e.message}`);
+    if (e.message?.includes('index') || e.message?.includes('requires an index')) {
+      console.error('\n[BlackBox] Firestore composite index required for bb:health.');
+      console.error('Add this to your firestore.indexes.json and run: firebase deploy --only firestore:indexes\n');
+      console.error(JSON.stringify({ collectionGroup: "__blackbox", queryScope: "COLLECTION", fields: [{ fieldPath: "type", order: "ASCENDING" }, { fieldPath: "createdAt", order: "ASCENDING" }] }, null, 2));
+      console.error('\nOr click the link in the original error:', e.message);
+    } else {
+      console.error(`[BlackBox] bb-health failed: ${e.message}`);
+    }
     process.exit(1);
   }
 }

@@ -9,7 +9,8 @@ let _writingError = false;
 let _collectionRef = null;
 let _writeQueue = [];
 let _processing = false;
-let _fingerprintCache = new Map(); // fingerprint → docRef (avoids Firestore eventual consistency race)
+let _fingerprintCache = new Map();
+let _firstWriteLogged = false; // fingerprint → docRef (avoids Firestore eventual consistency race)
 
 // Firestore SDK functions — resolved dynamically
 let _firestoreFns = null;
@@ -219,8 +220,15 @@ async function _doWrite(errorEntry) {
       const docRef = await fns.addDoc(_collectionRef, doc);
       _fingerprintCache.set(fingerprint, docRef);
       _failureCount = 0;
+      if (!_firstWriteLogged) {
+        _firstWriteLogged = true;
+        console.log('[BlackBox] First error captured and written to Firestore');
+      }
     } catch (e) {
       handleWriteFailure(e);
+      if (!_firstWriteLogged && e?.message?.includes('permission')) {
+        console.error('[BlackBox] Firestore rules block writes to __blackbox. Add rules to allow read/write on the __blackbox collection.');
+      }
     }
   } catch { /* ignore top-level */ } finally {
     _writingError = false;
@@ -304,6 +312,7 @@ export function _resetPersistence() {
   _writeQueue = [];
   _processing = false;
   _fingerprintCache = new Map();
+  _firstWriteLogged = false;
 }
 
 export function _setFirestoreFns(fns) {

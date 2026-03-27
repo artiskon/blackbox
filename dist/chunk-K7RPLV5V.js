@@ -8,7 +8,7 @@ import {
   getPersistenceConfig,
   initPersistence,
   isCircuitOpen
-} from "./chunk-L377ZJBL.js";
+} from "./chunk-VVEOEWI2.js";
 
 // src/core/constants.js
 var DEFAULTS = {
@@ -577,6 +577,7 @@ function _notifySubscribers() {
 }
 var blackbox = {
   init(options = {}) {
+    if (typeof window === "undefined") return blackbox;
     if (_initialized) {
       console.warn("[BlackBox] Already initialized, skipping");
       return blackbox;
@@ -594,6 +595,9 @@ var blackbox = {
         }
       } catch (e) {
       }
+    }
+    if (options.db && typeof options.db !== "object") {
+      console.error("[BlackBox] init() `db` must be a Firestore instance. Got:", typeof options.db);
     }
     _config = __spreadValues(__spreadValues({}, DEFAULTS), options);
     _sessionId = generateSessionId();
@@ -689,7 +693,9 @@ var blackbox = {
       }
     }
     blackbox._addBreadcrumb("system", { action: "blackbox_initialized", sessionId: _sessionId });
-    console.log(`[BlackBox] Active | session: ${_sessionId}`);
+    const env = _config.environment || "default";
+    const dbStatus = _config.db ? "Firestore connected" : "local only";
+    console.log(`[BlackBox] Active | ${dbStatus} | env: ${env} | session: ${_sessionId}`);
     return blackbox;
   },
   log(action, data = {}) {
@@ -752,7 +758,7 @@ var blackbox = {
   // --- Firestore query methods for the UI panel ---
   async queryPersistedErrors(limit = 50) {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-PUT7XR35.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-76GQSQHZ.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { errors: [], connected: false };
@@ -778,7 +784,7 @@ var blackbox = {
   },
   async queryHealth() {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-PUT7XR35.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-76GQSQHZ.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { connected: false };
@@ -816,7 +822,7 @@ var blackbox = {
   },
   async queryTimeline(minutes = 5) {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-PUT7XR35.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-76GQSQHZ.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { events: [], connected: false };
@@ -845,7 +851,7 @@ var blackbox = {
   },
   async clearPersistedErrors() {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-PUT7XR35.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-76GQSQHZ.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { success: false, error: "Not connected to Firestore" };
