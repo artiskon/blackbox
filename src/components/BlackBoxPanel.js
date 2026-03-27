@@ -84,9 +84,9 @@ const BREADCRUMB_FILTER_TYPES = ['click', 'network', 'error', 'navigation', 'per
 const tabStyle = (active, hovered) => ({
   padding: '6px 12px', cursor: 'pointer', fontSize: '11px', fontWeight: active ? 'bold' : 'normal',
   color: active ? 'white' : hovered ? '#ccc' : '#888',
+  borderTop: 'none', borderLeft: 'none', borderRight: 'none',
   borderBottom: active ? '2px solid #6366f1' : '2px solid transparent',
   background: hovered && !active ? 'rgba(255,255,255,0.05)' : 'transparent',
-  border: 'none', borderBottomStyle: 'solid',
   transition: 'color 0.15s, background 0.15s',
 });
 const sectionTitle = { fontSize: '10px', color: '#888', textTransform: 'uppercase', padding: '8px 14px 4px', letterSpacing: '0.5px' };
