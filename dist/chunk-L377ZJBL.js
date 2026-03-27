@@ -115,6 +115,7 @@ var _writingError = false;
 var _collectionRef = null;
 var _writeQueue = [];
 var _processing = false;
+var _fingerprintCache = /* @__PURE__ */ new Map();
 var _firestoreFns = null;
 async function getFirestoreFns() {
   if (_firestoreFns) return _firestoreFns;
@@ -211,6 +212,7 @@ async function _processQueue() {
   _processing = false;
 }
 async function _doWrite(errorEntry) {
+  var _a;
   _writingError = true;
   try {
     const fns = await getFirestoreFns();
@@ -221,6 +223,21 @@ async function _doWrite(errorEntry) {
       errorEntry.path,
       errorEntry.stack
     );
+    const cachedRef = _fingerprintCache.get(fingerprint);
+    if (cachedRef) {
+      try {
+        const currentData = (_a = (await fns.getDocs(fns.query(_collectionRef, fns.where("fingerprint", "==", fingerprint), fns.limit(1)))).docs[0]) == null ? void 0 : _a.data();
+        await fns.updateDoc(cachedRef, {
+          occurrences: ((currentData == null ? void 0 : currentData.occurrences) || 1) + 1,
+          lastSeen: fns.serverTimestamp(),
+          breadcrumbs: errorEntry.breadcrumbs || []
+        });
+        _failureCount = 0;
+        return;
+      } catch (e) {
+        _fingerprintCache.delete(fingerprint);
+      }
+    }
     let existingDoc = null;
     try {
       const dedupQuery = fns.query(
@@ -243,6 +260,7 @@ async function _doWrite(errorEntry) {
           lastSeen: fns.serverTimestamp(),
           breadcrumbs: errorEntry.breadcrumbs || []
         });
+        _fingerprintCache.set(fingerprint, existingDoc.ref);
         _failureCount = 0;
         return;
       } catch (e) {
@@ -271,7 +289,8 @@ async function _doWrite(errorEntry) {
     };
     doc = trimDocument(doc, _config.maxDocumentBytes);
     try {
-      await fns.addDoc(_collectionRef, doc);
+      const docRef = await fns.addDoc(_collectionRef, doc);
+      _fingerprintCache.set(fingerprint, docRef);
       _failureCount = 0;
     } catch (e) {
       handleWriteFailure(e);
@@ -345,6 +364,7 @@ function _resetPersistence() {
   _firestoreFns = null;
   _writeQueue = [];
   _processing = false;
+  _fingerprintCache = /* @__PURE__ */ new Map();
 }
 function _setFirestoreFns(fns) {
   _firestoreFns = fns;

@@ -84,6 +84,20 @@ const blackbox = {
 
     _config = { ...DEFAULTS, ...options };
     _sessionId = generateSessionId();
+
+    // Recover breadcrumbs from previous session saved on unload
+    let _pendingRecovery = null;
+    try {
+      const saved = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem('__bb_pending_crumbs') : null;
+      if (saved) {
+        const { sessionId: prevSession, breadcrumbs: prevCrumbs, timestamp } = JSON.parse(saved);
+        sessionStorage.removeItem('__bb_pending_crumbs');
+        const age = Date.now() - new Date(timestamp).getTime();
+        if (age < 5 * 60 * 1000 && prevCrumbs.length > 0) {
+          _pendingRecovery = { sessionId: prevSession, breadcrumbs: prevCrumbs };
+        }
+      }
+    } catch { /* sessionStorage not available */ }
     _breadcrumbs = new BreadcrumbManager(_config.maxBreadcrumbs, _config.maxBreadcrumbRepeat);
     _errors = [];
     _errorCount = 0;
@@ -119,6 +133,34 @@ const blackbox = {
       } catch { /* ignore */ }
     }, _config.activityFlushInterval);
 
+    // Flush breadcrumbs on tab close/hide
+    if (typeof document !== 'undefined' && typeof window !== 'undefined') {
+      const handleUnload = () => {
+        try {
+          const pending = _breadcrumbs ? _breadcrumbs.snapshot() : [];
+          if (pending.length > 0) {
+            sessionStorage.setItem('__bb_pending_crumbs', JSON.stringify({
+              sessionId: _sessionId,
+              breadcrumbs: pending.slice(-40),
+              timestamp: new Date().toISOString()
+            }));
+          }
+          if (_onActivityFlushCallback) {
+            _onActivityFlushCallback(pending);
+          }
+        } catch { /* sessionStorage may not be available */ }
+      };
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === 'hidden') handleUnload();
+      };
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+      window.addEventListener('beforeunload', handleUnload);
+      _cleanupFns.push(() => {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        window.removeEventListener('beforeunload', handleUnload);
+      });
+    }
+
     _initialized = true;
 
     // Initialize persistence and activity log if db is provided
@@ -128,6 +170,11 @@ const blackbox = {
       }
       try { initActivityLog(blackbox); } catch (e) {
         console.warn('[BlackBox] Activity log init failed:', e);
+      }
+      // Flush recovered breadcrumbs from previous session
+      if (_pendingRecovery && _onActivityFlushCallback) {
+        try { _onActivityFlushCallback(_pendingRecovery.breadcrumbs); } catch { /* ignore */ }
+        _pendingRecovery = null;
       }
     }
 
@@ -151,6 +198,22 @@ const blackbox = {
       const stack = error?.stack || '';
       blackbox._recordError({ message, stack, source: 'manual', context });
     } catch { /* ignore */ }
+  },
+
+  setUser(userInfo) {
+    if (!_initialized) return;
+    _config.user = userInfo;
+  },
+
+  setTag(key, value) {
+    if (!_initialized) return;
+    if (!_config.tags) _config.tags = {};
+    _config.tags[key] = value;
+  },
+
+  setEnvironment(env) {
+    if (!_initialized) return;
+    _config.environment = env;
   },
 
   onUpdate(callback) {
@@ -367,7 +430,10 @@ const blackbox = {
           language: navigator.language
         },
         sessionId: _sessionId,
-        schemaVersion: _config.schemaVersion
+        schemaVersion: _config.schemaVersion,
+        environment: _config.environment || null,
+        tags: _config.tags || {},
+        user: _config.user || null
       };
 
       _errors.push(entry);

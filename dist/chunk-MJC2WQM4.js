@@ -8,7 +8,7 @@ import {
   getPersistenceConfig,
   initPersistence,
   isCircuitOpen
-} from "./chunk-L4KSGTZC.js";
+} from "./chunk-L377ZJBL.js";
 
 // src/core/constants.js
 var DEFAULTS = {
@@ -21,7 +21,7 @@ var DEFAULTS = {
   maxBodyLength: 0,
   maxClassNameLength: 200,
   maxBreadcrumbRepeat: 3,
-  activityFlushInterval: 6e4,
+  activityFlushInterval: 12e4,
   schemaVersion: 1,
   // Persistence
   maxWriteFailures: 3,
@@ -35,7 +35,18 @@ var DEFAULTS = {
     "Download the React DevTools",
     "Warning: ReactDOM.render is no longer supported"
   ],
-  sanitize: null
+  sanitize: null,
+  // Network noise filtering
+  networkExcludePatterns: [
+    "firestore.googleapis.com",
+    "identitytoolkit.googleapis.com",
+    "__nextjs_original-stack-frames",
+    "hot-update"
+  ],
+  // Context tagging
+  environment: null,
+  tags: {},
+  user: null
 };
 
 // src/core/session.js
@@ -132,22 +143,42 @@ function installErrorHook(blackbox2) {
 // src/core/hooks/clickHook.js
 function installClickHook(blackbox2) {
   const config = blackbox2._getConfig();
+  function getLabel(el) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    if ((_a = el.dataset) == null ? void 0 : _a.bb) return null;
+    const text = ((_c = (_b = el.textContent) == null ? void 0 : _b.trim()) == null ? void 0 : _c.slice(0, 100)) || "";
+    if (text.length >= 2) return null;
+    const ariaLabel = (_d = el.getAttribute) == null ? void 0 : _d.call(el, "aria-label");
+    if (ariaLabel) return ariaLabel.slice(0, 100);
+    const title = (_e = el.getAttribute) == null ? void 0 : _e.call(el, "title");
+    if (title) return title.slice(0, 100);
+    const parent = (_f = el.closest) == null ? void 0 : _f.call(el, "button, a");
+    if (parent && parent !== el) {
+      const parentText = (_h = (_g = parent.textContent) == null ? void 0 : _g.trim()) == null ? void 0 : _h.slice(0, 100);
+      if (parentText && parentText.length >= 2) return parentText;
+      const parentAria = (_i = parent.getAttribute) == null ? void 0 : _i.call(parent, "aria-label");
+      if (parentAria) return parentAria.slice(0, 100);
+    }
+    return null;
+  }
   const handler = (event) => {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d, _e, _f, _g;
     try {
       const target = event.target;
+      if ((_a = target.closest) == null ? void 0 : _a.call(target, "[data-bb-panel]")) return;
       const el = target.closest ? target.closest('button, a, [role="button"], input[type="submit"], [data-bb]') || target : target;
       const tag = el.tagName ? el.tagName.toLowerCase() : "unknown";
-      const text = ((_b = (_a = el.textContent) == null ? void 0 : _a.trim()) == null ? void 0 : _b.slice(0, 100)) || "";
+      const text = ((_c = (_b = el.textContent) == null ? void 0 : _b.trim()) == null ? void 0 : _c.slice(0, 100)) || "";
       const id = el.id || null;
-      const className = ((_d = (_c = el.className) == null ? void 0 : _c.toString()) == null ? void 0 : _d.slice(0, config.maxClassNameLength)) || "";
-      const dataBb = ((_e = el.dataset) == null ? void 0 : _e.bb) || null;
+      const className = ((_e = (_d = el.className) == null ? void 0 : _d.toString()) == null ? void 0 : _e.slice(0, config.maxClassNameLength)) || "";
+      const dataBb = ((_f = el.dataset) == null ? void 0 : _f.bb) || null;
       let href = el.href || null;
       if (href) href = blackbox2._stripQueryParams(href);
-      blackbox2._addBreadcrumb("click", { tag, text, id, className, dataBb, href });
-      const isInteractive = tag === "button" || tag === "input" && el.type === "submit" || ((_f = el.getAttribute) == null ? void 0 : _f.call(el, "role")) === "button";
+      const autoLabel = text.length < 2 && !dataBb ? getLabel(el) : null;
+      blackbox2._addBreadcrumb("click", { tag, text, id, className, dataBb, href, autoLabel });
+      const isInteractive = tag === "button" || tag === "input" && el.type === "submit" || ((_g = el.getAttribute) == null ? void 0 : _g.call(el, "role")) === "button";
       if (isInteractive) {
-        blackbox2._registerSilenceCheck({ tag, text, id, dataBb });
+        blackbox2._registerSilenceCheck({ tag, text: autoLabel || text, id, dataBb });
       }
     } catch (e) {
     }
@@ -272,6 +303,10 @@ function installConsoleHook(blackbox2) {
 function installNetworkHook(blackbox2) {
   const config = blackbox2._getConfig();
   const originalFetch = window.fetch.bind(window);
+  const excludePatterns = config.networkExcludePatterns || [];
+  function isExcludedUrl(url) {
+    return excludePatterns.some((pattern) => url.includes(pattern));
+  }
   window.fetch = async function(input, init = {}) {
     const method = (init.method || "GET").toUpperCase();
     let url = "";
@@ -280,6 +315,9 @@ function installNetworkHook(blackbox2) {
       url = blackbox2._stripQueryParams(url);
       if (url.length > config.maxUrlLength) url = url.slice(0, config.maxUrlLength);
     } catch (e) {
+    }
+    if (isExcludedUrl(url)) {
+      return originalFetch(input, init);
     }
     const start = Date.now();
     let response;
@@ -441,10 +479,14 @@ async function flushActivity(currentBreadcrumbs) {
     if (breadcrumbs.length > 40) {
       breadcrumbs = breadcrumbs.slice(-40);
     }
+    const bbConfig = _blackbox._getConfig();
     let doc = {
       schemaVersion: config.schemaVersion,
       type: "activity",
       sessionId: _blackbox.getSessionId(),
+      environment: bbConfig.environment || null,
+      tags: bbConfig.tags || {},
+      user: bbConfig.user || null,
       breadcrumbs,
       period: {
         from,
@@ -454,7 +496,9 @@ async function flushActivity(currentBreadcrumbs) {
         viewport: `${window.innerWidth}x${window.innerHeight}`,
         timestamp: now
       },
-      createdAt: fns.serverTimestamp()
+      createdAt: fns.serverTimestamp(),
+      expireAt: fns.Timestamp.fromDate(new Date(Date.now() + 48 * 60 * 60 * 1e3))
+      // auto-delete after 48h via Firestore TTL
     };
     const size = estimateDocBytes(doc);
     if (size > maxBytes && doc.breadcrumbs.length > 20) {
@@ -553,6 +597,19 @@ var blackbox = {
     }
     _config = __spreadValues(__spreadValues({}, DEFAULTS), options);
     _sessionId = generateSessionId();
+    let _pendingRecovery = null;
+    try {
+      const saved = typeof sessionStorage !== "undefined" ? sessionStorage.getItem("__bb_pending_crumbs") : null;
+      if (saved) {
+        const { sessionId: prevSession, breadcrumbs: prevCrumbs, timestamp } = JSON.parse(saved);
+        sessionStorage.removeItem("__bb_pending_crumbs");
+        const age = Date.now() - new Date(timestamp).getTime();
+        if (age < 5 * 60 * 1e3 && prevCrumbs.length > 0) {
+          _pendingRecovery = { sessionId: prevSession, breadcrumbs: prevCrumbs };
+        }
+      }
+    } catch (e) {
+    }
     _breadcrumbs = new BreadcrumbManager(_config.maxBreadcrumbs, _config.maxBreadcrumbRepeat);
     _errors = [];
     _errorCount = 0;
@@ -584,6 +641,33 @@ var blackbox = {
       } catch (e) {
       }
     }, _config.activityFlushInterval);
+    if (typeof document !== "undefined" && typeof window !== "undefined") {
+      const handleUnload = () => {
+        try {
+          const pending = _breadcrumbs ? _breadcrumbs.snapshot() : [];
+          if (pending.length > 0) {
+            sessionStorage.setItem("__bb_pending_crumbs", JSON.stringify({
+              sessionId: _sessionId,
+              breadcrumbs: pending.slice(-40),
+              timestamp: (/* @__PURE__ */ new Date()).toISOString()
+            }));
+          }
+          if (_onActivityFlushCallback) {
+            _onActivityFlushCallback(pending);
+          }
+        } catch (e) {
+        }
+      };
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === "hidden") handleUnload();
+      };
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+      window.addEventListener("beforeunload", handleUnload);
+      _cleanupFns.push(() => {
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
+        window.removeEventListener("beforeunload", handleUnload);
+      });
+    }
     _initialized = true;
     if (_config.db) {
       try {
@@ -595,6 +679,13 @@ var blackbox = {
         initActivityLog(blackbox);
       } catch (e) {
         console.warn("[BlackBox] Activity log init failed:", e);
+      }
+      if (_pendingRecovery && _onActivityFlushCallback) {
+        try {
+          _onActivityFlushCallback(_pendingRecovery.breadcrumbs);
+        } catch (e) {
+        }
+        _pendingRecovery = null;
       }
     }
     blackbox._addBreadcrumb("system", { action: "blackbox_initialized", sessionId: _sessionId });
@@ -616,6 +707,19 @@ var blackbox = {
       blackbox._recordError({ message, stack, source: "manual", context });
     } catch (e) {
     }
+  },
+  setUser(userInfo) {
+    if (!_initialized) return;
+    _config.user = userInfo;
+  },
+  setTag(key, value) {
+    if (!_initialized) return;
+    if (!_config.tags) _config.tags = {};
+    _config.tags[key] = value;
+  },
+  setEnvironment(env) {
+    if (!_initialized) return;
+    _config.environment = env;
   },
   onUpdate(callback) {
     _subscribers.push(callback);
@@ -648,7 +752,7 @@ var blackbox = {
   // --- Firestore query methods for the UI panel ---
   async queryPersistedErrors(limit = 50) {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-JRCBCGSJ.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-PUT7XR35.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { errors: [], connected: false };
@@ -674,7 +778,7 @@ var blackbox = {
   },
   async queryHealth() {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-JRCBCGSJ.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-PUT7XR35.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { connected: false };
@@ -712,7 +816,7 @@ var blackbox = {
   },
   async queryTimeline(minutes = 5) {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-JRCBCGSJ.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-PUT7XR35.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { events: [], connected: false };
@@ -741,7 +845,7 @@ var blackbox = {
   },
   async clearPersistedErrors() {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-JRCBCGSJ.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-PUT7XR35.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { success: false, error: "Not connected to Firestore" };
@@ -800,7 +904,10 @@ var blackbox = {
           language: navigator.language
         },
         sessionId: _sessionId,
-        schemaVersion: _config.schemaVersion
+        schemaVersion: _config.schemaVersion,
+        environment: _config.environment || null,
+        tags: _config.tags || {},
+        user: _config.user || null
       };
       _errors.push(entry);
       if (_errors.length > 50) _errors.shift();

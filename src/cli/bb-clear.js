@@ -8,13 +8,13 @@ import path from 'path';
 
 function parseArgs() {
   const args = process.argv.slice(2);
-  let days = 7;
+  let days = 1;
   let all = false;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--all') all = true;
     if (args[i] === '--days' && args[i + 1]) {
       days = parseInt(args[i + 1], 10);
-      if (isNaN(days)) days = 7;
+      if (isNaN(days)) days = 1;
     }
   }
   return { days, all };

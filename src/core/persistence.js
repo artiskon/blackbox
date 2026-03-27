@@ -9,6 +9,7 @@ let _writingError = false;
 let _collectionRef = null;
 let _writeQueue = [];
 let _processing = false;
+let _fingerprintCache = new Map(); // fingerprint → docRef (avoids Firestore eventual consistency race)
 
 // Firestore SDK functions — resolved dynamically
 let _firestoreFns = null;
@@ -140,7 +141,25 @@ async function _doWrite(errorEntry) {
       errorEntry.stack
     );
 
-    // Deduplication: check for existing error with same fingerprint
+    // Deduplication: check local cache first (avoids Firestore eventual consistency race)
+    const cachedRef = _fingerprintCache.get(fingerprint);
+    if (cachedRef) {
+      try {
+        const currentData = (await fns.getDocs(fns.query(_collectionRef, fns.where('fingerprint', '==', fingerprint), fns.limit(1)))).docs[0]?.data();
+        await fns.updateDoc(cachedRef, {
+          occurrences: (currentData?.occurrences || 1) + 1,
+          lastSeen: fns.serverTimestamp(),
+          breadcrumbs: errorEntry.breadcrumbs || []
+        });
+        _failureCount = 0;
+        return;
+      } catch {
+        _fingerprintCache.delete(fingerprint);
+        // Fall through to query
+      }
+    }
+
+    // Then check Firestore (for dedup across sessions/page loads)
     let existingDoc = null;
     try {
       const dedupQuery = fns.query(
@@ -153,12 +172,10 @@ async function _doWrite(errorEntry) {
         existingDoc = snapshot.docs[0];
       }
     } catch (dedupErr) {
-      // Dedup query failed — fall through to create new doc
       existingDoc = null;
     }
 
     if (existingDoc) {
-      // Update existing: increment occurrences, update lastSeen + breadcrumbs
       try {
         const currentData = existingDoc.data();
         await fns.updateDoc(existingDoc.ref, {
@@ -166,6 +183,7 @@ async function _doWrite(errorEntry) {
           lastSeen: fns.serverTimestamp(),
           breadcrumbs: errorEntry.breadcrumbs || []
         });
+        _fingerprintCache.set(fingerprint, existingDoc.ref);
         _failureCount = 0;
         return;
       } catch (e) {
@@ -198,7 +216,8 @@ async function _doWrite(errorEntry) {
     doc = trimDocument(doc, _config.maxDocumentBytes);
 
     try {
-      await fns.addDoc(_collectionRef, doc);
+      const docRef = await fns.addDoc(_collectionRef, doc);
+      _fingerprintCache.set(fingerprint, docRef);
       _failureCount = 0;
     } catch (e) {
       handleWriteFailure(e);
@@ -284,6 +303,7 @@ export function _resetPersistence() {
   _firestoreFns = null;
   _writeQueue = [];
   _processing = false;
+  _fingerprintCache = new Map();
 }
 
 export function _setFirestoreFns(fns) {

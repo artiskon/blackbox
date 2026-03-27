@@ -50,11 +50,11 @@ async function main() {
       }
     }
 
-    // Deduplicate by timestamp (same timestamp = same event)
+    // Deduplicate by timestamp + type + identifier
     const seen = new Set();
     const unique = [];
     for (const crumb of allBreadcrumbs) {
-      const key = crumb.timestamp || '';
+      const key = (crumb.timestamp || '') + '|' + (crumb.type || '') + '|' + (crumb.url || crumb.message || crumb.action || crumb.to || crumb.tag || '');
       if (key && seen.has(key)) continue;
       if (key) seen.add(key);
       unique.push(crumb);

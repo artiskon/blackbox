@@ -8,7 +8,7 @@ export const DEFAULTS = {
   maxBodyLength: 0,
   maxClassNameLength: 200,
   maxBreadcrumbRepeat: 3,
-  activityFlushInterval: 60000,
+  activityFlushInterval: 120000,
   schemaVersion: 1,
 
   // Persistence
@@ -24,5 +24,18 @@ export const DEFAULTS = {
     'Download the React DevTools',
     'Warning: ReactDOM.render is no longer supported'
   ],
-  sanitize: null
+  sanitize: null,
+
+  // Network noise filtering
+  networkExcludePatterns: [
+    'firestore.googleapis.com',
+    'identitytoolkit.googleapis.com',
+    '__nextjs_original-stack-frames',
+    'hot-update',
+  ],
+
+  // Context tagging
+  environment: null,
+  tags: {},
+  user: null
 };

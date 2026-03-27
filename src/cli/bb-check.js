@@ -44,20 +44,39 @@ async function main() {
       return entry;
     });
 
+    // Group errors by fingerprint
+    const groups = new Map();
+    for (const err of errors) {
+      const fp = err.fingerprint || 'unknown';
+      if (!groups.has(fp)) {
+        groups.set(fp, { fingerprint: fp, message: err.message, source: err.source, docs: 0, totalOccurrences: 0, lastSeen: err.lastSeen, errors: [] });
+      }
+      const g = groups.get(fp);
+      g.docs++;
+      g.totalOccurrences += (err.occurrences || 1);
+      if (err.lastSeen > g.lastSeen) g.lastSeen = err.lastSeen;
+      g.errors.push(err);
+    }
+    const grouped = [...groups.values()].sort((a, b) => (b.lastSeen || '').localeCompare(a.lastSeen || ''));
+
     const output = {
       pulledAt: new Date().toISOString(),
       sessionInfo: 'Current BlackBox session data',
       errorCount: errors.length,
+      uniqueFingerprints: grouped.length,
+      grouped,
       errors
     };
 
     const filePath = writeLog('blackbox.json', output);
 
-    console.log(`\n[BlackBox] Pulled ${errors.length} error(s) to dev-logs/blackbox.json\n`);
-    errors.forEach((err, i) => {
-      console.log(formatError(i + 1, err));
+    console.log(`\n[BlackBox] Pulled ${errors.length} error(s) → ${grouped.length} unique issues → dev-logs/blackbox.json\n`);
+    grouped.forEach((g, i) => {
+      const src = `[${g.source || 'error'}]`.padEnd(12);
+      const msg = (g.message || '').slice(0, 60);
+      console.log(`  ${i + 1}. ${src} ${msg}  (${g.docs} doc${g.docs > 1 ? 's' : ''}, ${g.totalOccurrences} occurrences)`);
     });
-    if (errors.length > 0) console.log('');
+    if (grouped.length > 0) console.log('');
 
     process.exit(0);
   } catch (e) {

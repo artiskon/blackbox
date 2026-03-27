@@ -19,6 +19,14 @@ export interface BlackBoxConfig {
   collectionName?: string;
   /** Maximum breadcrumbs to keep in memory (default: 80) */
   maxBreadcrumbs?: number;
+  /** URL patterns to exclude from network tracking (default: Firestore, HMR, etc.) */
+  networkExcludePatterns?: string[];
+  /** Environment label (e.g. 'development', 'staging') */
+  environment?: string;
+  /** Arbitrary key-value tags */
+  tags?: Record<string, string>;
+  /** User context for error attribution */
+  user?: { id?: string; role?: string; [key: string]: any } | null;
 }
 
 // ---- Breadcrumbs & Errors ----
@@ -154,6 +162,15 @@ export interface BlackBox {
 
   /** Check if BlackBox is connected to Firestore */
   isConnectedToFirestore(): boolean;
+
+  /** Set user context for error attribution */
+  setUser(user: { id?: string; role?: string; [key: string]: any }): void;
+
+  /** Set a tag key-value pair */
+  setTag(key: string, value: string): void;
+
+  /** Set the environment label */
+  setEnvironment(env: string): void;
 
   /** Tear down BlackBox: remove all hooks, clear timers, reset state. Useful for HMR cleanup. */
   destroy(): void;

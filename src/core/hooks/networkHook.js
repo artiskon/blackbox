@@ -1,6 +1,11 @@
 export function installNetworkHook(blackbox) {
   const config = blackbox._getConfig();
   const originalFetch = window.fetch.bind(window);
+  const excludePatterns = config.networkExcludePatterns || [];
+
+  function isExcludedUrl(url) {
+    return excludePatterns.some(pattern => url.includes(pattern));
+  }
 
   window.fetch = async function (input, init = {}) {
     const method = (init.method || 'GET').toUpperCase();
@@ -10,6 +15,11 @@ export function installNetworkHook(blackbox) {
       url = blackbox._stripQueryParams(url);
       if (url.length > config.maxUrlLength) url = url.slice(0, config.maxUrlLength);
     } catch { /* ignore */ }
+
+    // Skip tracking for excluded URLs (Firestore internal, HMR, etc.)
+    if (isExcludedUrl(url)) {
+      return originalFetch(input, init);
+    }
 
     const start = Date.now();
     let response;

@@ -39,10 +39,14 @@ async function flushActivity(currentBreadcrumbs) {
       breadcrumbs = breadcrumbs.slice(-40);
     }
 
+    const bbConfig = _blackbox._getConfig();
     let doc = {
       schemaVersion: config.schemaVersion,
       type: 'activity',
       sessionId: _blackbox.getSessionId(),
+      environment: bbConfig.environment || null,
+      tags: bbConfig.tags || {},
+      user: bbConfig.user || null,
       breadcrumbs,
       period: {
         from,
@@ -52,7 +56,8 @@ async function flushActivity(currentBreadcrumbs) {
         viewport: `${window.innerWidth}x${window.innerHeight}`,
         timestamp: now
       },
-      createdAt: fns.serverTimestamp()
+      createdAt: fns.serverTimestamp(),
+      expireAt: fns.Timestamp.fromDate(new Date(Date.now() + 48 * 60 * 60 * 1000)) // auto-delete after 48h via Firestore TTL
     };
 
     // Final size check
