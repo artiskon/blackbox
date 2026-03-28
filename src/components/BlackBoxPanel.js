@@ -207,7 +207,14 @@ function BlackBoxPanel() {
       });
       if (err.context && Object.keys(err.context).length > 0) {
         const ctx = { ...err.context };
+        // Remove fields already represented in message or bloated
         delete ctx.responseBody;
+        delete ctx.requestBody;
+        if (err.source === 'network') {
+          delete ctx.status;
+          delete ctx.method;
+          delete ctx.url;
+        }
         if (Object.keys(ctx).length > 0) entry.context = ctx;
       }
       grouped.set(key, entry);
@@ -226,8 +233,9 @@ function BlackBoxPanel() {
     // -- Build report --
     const report = stripNulls({
       _type: 'BlackBox Diagnostic Report',
-      _version: '1.3.6',
+      _version: '1.3.8',
       _generatedAt: new Date().toISOString(),
+      _instructions: 'Errors are deduplicated (count = occurrences). Breadcrumbs are the single chronological trail of user actions for the session. Silences are buttons clicked with no followup (possible broken UI). History contains persisted errors from Firestore (grouped by fingerprint). Health is a 24h summary.',
       session: stripNulls({
         id: blackbox.getSessionId(),
         errorCount,

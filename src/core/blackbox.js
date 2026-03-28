@@ -24,6 +24,7 @@ let _flushTimer = null;
 let _writingError = false;
 let _suspiciousSilences = [];
 let _pendingSilenceChecks = [];
+let _pendingFetchCount = 0;
 let _cleanupFns = [];
 
 function _stripQueryParams(url) {
@@ -484,6 +485,10 @@ const blackbox = {
     return _getCurrentPath();
   },
 
+  // Pending fetch tracking (used by silence detector)
+  _incrementPendingFetches() { _pendingFetchCount++; },
+  _decrementPendingFetches() { _pendingFetchCount = Math.max(0, _pendingFetchCount - 1); },
+
   // Suspicious silence support
   _registerSilenceCheck(clickDetails) {
     if (!_initialized) return;
@@ -498,6 +503,10 @@ const blackbox = {
           return new Date(c.timestamp).getTime() > clickTime;
         });
 
+        if (!hasFollowup && _pendingFetchCount > 0) {
+          // Network request still in flight — not a silence
+          return;
+        }
         if (!hasFollowup) {
           const silence = {
             type: 'suspicious_silence',
@@ -527,6 +536,7 @@ const blackbox = {
     _onErrorCallback = null;
     _onActivityFlushCallback = null;
     _suspiciousSilences = [];
+    _pendingFetchCount = 0;
     for (const id of _pendingSilenceChecks) clearTimeout(id);
     _pendingSilenceChecks = [];
     if (_flushTimer) clearInterval(_flushTimer);

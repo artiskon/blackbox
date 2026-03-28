@@ -23,10 +23,12 @@ export function installNetworkHook(blackbox) {
 
     const start = Date.now();
     let response;
+    blackbox._incrementPendingFetches();
 
     try {
       response = await originalFetch(input, init);
     } catch (err) {
+      blackbox._decrementPendingFetches();
       // Network error (offline, DNS failure, etc.)
       try {
         const duration = Date.now() - start;
@@ -105,6 +107,7 @@ export function installNetworkHook(blackbox) {
       }
     } catch { /* ignore */ }
 
+    blackbox._decrementPendingFetches();
     return response; // Always return original response
   };
 
