@@ -145,26 +145,117 @@ function BlackBoxPanel() {
 
   async function copyFullReport() {
     const config = blackbox._getConfig();
-    const report = {
+
+    // -- Helpers for compact output --
+    function cleanStack(stack) {
+      if (!stack) return undefined;
+      return stack.split('\n').slice(0, 5).map(l =>
+        l.replace(/https?:\/\/[^/]+\/_next\/static\/chunks\//, '')
+         .replace(/https?:\/\/[^/]+\//, '/')
+      ).join('\n');
+    }
+    function stripNulls(obj) {
+      const out = {};
+      for (const [k, v] of Object.entries(obj)) {
+        if (v === null || v === undefined) continue;
+        if (typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length === 0) continue;
+        if (Array.isArray(v) && v.length === 0) continue;
+        out[k] = v;
+      }
+      return out;
+    }
+    function compactBreadcrumb(bc) {
+      const out = { type: bc.type, time: bc.timestamp };
+      if (bc.type === 'click') {
+        out.el = `${bc.tag || 'element'}${bc.id ? '#' + bc.id : ''}${bc.dataBb ? '[data-bb=' + bc.dataBb + ']' : ''}`;
+        if (bc.text) out.text = bc.text.slice(0, 30);
+      } else if (bc.type === 'navigation') {
+        out.from = bc.from; out.to = bc.to;
+      } else if (bc.type === 'network') {
+        out.req = `${bc.method || 'GET'} ${bc.url || ''} → ${bc.status || '?'}`;
+        if (bc.duration) out.ms = bc.duration;
+      } else if (bc.type === 'error') {
+        out.msg = (bc.message || '').slice(0, 60);
+        if (bc.source) out.source = bc.source;
+      } else if (bc.type === 'suspicious_silence') {
+        const el = bc.clickedElement;
+        out.el = el ? `${el.tag || '?'}${el.dataBb ? '[data-bb=' + el.dataBb + ']' : ''} "${(el.text || '').slice(0, 20)}"` : '?';
+      } else if (bc.type === 'custom') {
+        out.action = bc.action;
+      } else {
+        out.action = bc.action || bc.message || '';
+      }
+      if (bc.repeatCount > 1) out.repeat = bc.repeatCount;
+      return out;
+    }
+
+    // -- Deduplicate errors --
+    const grouped = new Map();
+    for (const err of [...errors].reverse()) {
+      const key = `${err.source}:${(err.message || '').slice(0, 80)}`;
+      if (grouped.has(key)) {
+        grouped.get(key).count++;
+        continue;
+      }
+      const entry = stripNulls({
+        message: err.message,
+        source: err.source,
+        stack: cleanStack(err.stack),
+        path: err.path || err.url,
+        timestamp: err.metadata?.timestamp,
+        count: 1,
+      });
+      if (err.context && Object.keys(err.context).length > 0) entry.context = err.context;
+      grouped.set(key, entry);
+    }
+
+    // -- Compact silences --
+    const compactSilences = silences.map(s => {
+      const el = s.clickedElement;
+      return {
+        element: el ? `${el.tag || '?'}${el.id ? '#' + el.id : ''}${el.dataBb ? '[data-bb=' + el.dataBb + ']' : ''} "${(el.text || '').slice(0, 30)}"` : '?',
+        timestamp: s.timestamp,
+        waitedMs: s.waitedMs,
+      };
+    });
+
+    // -- Build report --
+    const report = stripNulls({
       _type: 'BlackBox Diagnostic Report',
-      _version: '1.3.1',
+      _version: '1.3.6',
       _generatedAt: new Date().toISOString(),
-      session: {
+      session: stripNulls({
         id: blackbox.getSessionId(),
         errorCount,
-        environment: config.environment || null,
-        tags: config.tags || {},
-        user: config.user || null,
+        environment: config.environment,
+        tags: config.tags,
+        user: config.user,
         firestoreConnected: isConnected,
-      },
-      liveErrors: [...errors].reverse(),
-      suspiciousSilences: silences,
-    };
+      }),
+      errors: [...grouped.values()],
+      silences: compactSilences.length > 0 ? compactSilences : undefined,
+      breadcrumbs: (blackbox.getBreadcrumbs ? blackbox.getBreadcrumbs() : []).map(compactBreadcrumb),
+    });
+
     if (historyLoaded && historyErrors.length > 0) {
-      report.persistedErrors = historyErrors;
+      const hGroups = new Map();
+      for (const err of historyErrors) {
+        const fp = err.fingerprint || 'unknown';
+        if (!hGroups.has(fp)) hGroups.set(fp, { message: err.message, source: err.source, fingerprint: fp, occurrences: 0, lastSeen: err.lastSeen });
+        const g = hGroups.get(fp);
+        g.occurrences += (err.occurrences || 1);
+        if (err.lastSeen > g.lastSeen) g.lastSeen = err.lastSeen;
+      }
+      report.history = [...hGroups.values()];
     }
     if (health) {
-      report.health = health;
+      report.health = stripNulls({
+        verdict: health.verdict,
+        uniqueErrors: health.uniqueErrors,
+        totalOccurrences: health.totalOccurrences,
+        systemicCount: health.systemicCount,
+        bySource: health.bySource,
+      });
     }
     const text = JSON.stringify(report, null, 2);
     let copied = false;
