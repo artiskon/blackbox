@@ -12,8 +12,12 @@ npm install github:artiskon/blackbox
 import blackbox from '@artiskon/blackbox';
 import { BlackBoxProvider, BlackBoxPanel } from '@artiskon/blackbox/components';
 import { db } from './firebase';
+import { collection, addDoc, updateDoc, query, where, limit, getDocs, serverTimestamp, Timestamp } from 'firebase/firestore';
 
-blackbox.init({ db });
+blackbox.init({
+  db,
+  firestoreFns: { collection, addDoc, updateDoc, query, where, limit, getDocs, serverTimestamp, Timestamp }
+});
 
 function App() {
   return (
@@ -52,9 +56,14 @@ bbTrackAuth(auth);
 | Command | Description |
 |---------|-------------|
 | `npm run bb:check` | Pull latest errors from Firestore into `dev-logs/blackbox.json` |
+| `npm run bb:check -- --verbose` | Full messages, paths, and context |
+| `npm run bb:check -- --id <fingerprint>` | Full detail for a single error |
+| `npm run bb:check -- --new` | Only errors since last check |
 | `npm run bb:health` | Generate a health summary with HEALTHY/WARNING/UNHEALTHY verdict |
 | `npm run bb:timeline` | Dump recent activity timeline to `dev-logs/bb-timeline.json` |
 | `npm run bb:clear` | Clear old error data from Firestore and local dev-logs |
+| `npm run bb:clear -- --all` | Clear everything |
+| `npm run bb:clear -- --fingerprint <hash>` | Delete only errors matching a fingerprint |
 
 ## Custom Logging
 
@@ -87,6 +96,8 @@ BlackBox is designed with privacy as a default:
 | `captureRequestBodies` | `false` | Request/response bodies are never stored unless explicitly enabled |
 | `sanitize` | `null` | Custom redaction hook — a function that processes every breadcrumb before storage. Return `null` to drop the breadcrumb entirely |
 | `consoleIgnorePatterns` | `[...]` | Console messages matching these patterns are silently dropped |
+| `errorExcludePatterns` | `[]` | Errors matching these patterns are dropped entirely (e.g. `['fbcdn.net']`) |
+| `firestoreFns` | `null` | Pass Firestore SDK functions to avoid module duplication (see Quick Start) |
 
 Form values are never captured — only field names and validation status.
 
