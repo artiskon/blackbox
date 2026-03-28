@@ -108,10 +108,8 @@ function isSafeEnvironment(config) {
 }
 
 function persistError(errorEntry) {
-  if (_circuitOpen) { console.warn('[BlackBox] Persistence: circuit open, skipping'); return; }
-  // _writingError prevents synchronous re-entry (infinite loop guard):
-  // if a Firestore write triggers console.error → _recordError → _onError → persistError
-  if (_writingError) { return; }
+  if (_circuitOpen) return;
+  if (_writingError) return;
 
   _writeQueue.push(errorEntry);
   if (!_processing) {
@@ -137,10 +135,7 @@ async function _doWrite(errorEntry) {
     if (!_collectionRef && fns && _db) {
       _collectionRef = fns.collection(_db, _config.collectionName);
     }
-    if (!fns || !_collectionRef) {
-      console.warn('[BlackBox] Persistence: no fns or collectionRef', { fns: !!fns, ref: !!_collectionRef, db: !!_db });
-      return;
-    }
+    if (!fns || !_collectionRef) return;
 
     const { fingerprint, groupingInputs } = generateFingerprint(
       errorEntry.message,
@@ -240,9 +235,7 @@ async function _doWrite(errorEntry) {
         console.error('[BlackBox] Firestore rules block writes to __blackbox. Add rules to allow read/write on the __blackbox collection.');
       }
     }
-  } catch (topErr) {
-    console.warn('[BlackBox] Persistence write error:', topErr?.message);
-  } finally {
+  } catch { /* ignore top-level */ } finally {
     _writingError = false;
   }
 }
@@ -255,7 +248,7 @@ function handleWriteFailure(e) {
   }
 }
 
-export function initPersistence(blackbox, db) {
+export function initPersistence(blackbox, db, externalFns) {
   try {
     _blackbox = blackbox;
     _db = db;
@@ -263,6 +256,12 @@ export function initPersistence(blackbox, db) {
     _failureCount = 0;
     _circuitOpen = false;
     _writingError = false;
+
+    // Use externally provided Firestore functions if available
+    // (avoids module duplication when BB is in a submodule with its own node_modules)
+    if (externalFns) {
+      _firestoreFns = externalFns;
+    }
 
     // Production safety check
     if (!isSafeEnvironment(_config)) {

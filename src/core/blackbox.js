@@ -181,7 +181,7 @@ const blackbox = {
 
     // Initialize persistence and activity log if db is provided
     if (_config.db) {
-      try { initPersistence(blackbox, _config.db); } catch (e) {
+      try { initPersistence(blackbox, _config.db, _config.firestoreFns); } catch (e) {
         console.warn('[BlackBox] Persistence init failed:', e);
       }
       try { initActivityLog(blackbox); } catch (e) {
