@@ -2,6 +2,21 @@
 
 This app uses BlackBox for dev-time error monitoring. Follow these instructions exactly.
 
+## Step 0: Read these files BEFORE doing anything
+
+You MUST read these files to understand the current BlackBox setup. Do not skip this step — misconfigurations are silent and hard to catch later.
+
+1. **`package.json`** — check if `@artiskon/blackbox` is in dependencies and if `bb:check`/`bb:clear` scripts exist
+2. **Root layout file** (e.g., `src/app/layout.tsx`) — check if `BlackBoxInit`, `BlackBoxProviderWrapper`, and `BlackBoxPanelWrapper` are included
+3. **BlackBoxInit component** (e.g., `src/components/BlackBoxInit.tsx`) — check if `blackbox.init()` is called with BOTH `db` and `firestoreFns`
+4. **Firebase config file** (e.g., `src/lib/firebase.ts`) — check that the Firestore `db` instance exists and is exported
+5. **`dev-logs/blackbox.json`** — if it exists, read it. It contains the last `bb:check` output with persisted errors
+6. **`.firebaserc`** — check which Firebase project is active
+7. **`firestore.rules`** — check that `__blackbox` collection has read/write rules
+8. **`firestore.indexes.json`** — check that the required composite indexes are defined
+
+If any of these files are missing or misconfigured, fix them before debugging.
+
 ## Step 1: Check if BlackBox is installed
 
 Look for `@artiskon/blackbox` in `package.json` dependencies. If missing:
