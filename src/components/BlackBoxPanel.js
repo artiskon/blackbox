@@ -205,7 +205,11 @@ function BlackBoxPanel() {
         timestamp: err.metadata?.timestamp,
         count: 1,
       });
-      if (err.context && Object.keys(err.context).length > 0) entry.context = err.context;
+      if (err.context && Object.keys(err.context).length > 0) {
+        const ctx = { ...err.context };
+        delete ctx.responseBody;
+        if (Object.keys(ctx).length > 0) entry.context = ctx;
+      }
       grouped.set(key, entry);
     }
 
