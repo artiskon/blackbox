@@ -26,13 +26,24 @@ export function installConsoleHook(blackbox) {
     return result.slice(0, config.maxMessageLength);
   }
 
+  function serializeArg(a) {
+    if (typeof a === 'string') return a;
+    // Extract useful properties from Error/FirebaseError objects
+    if (a && typeof a === 'object' && (a instanceof Error || a.code || a.message)) {
+      const parts = [];
+      if (a.message) parts.push(a.message);
+      if (a.code) parts.push(`[code: ${a.code}]`);
+      if (a.path) parts.push(`[path: ${a.path}]`);
+      if (a.stack && !a.message) parts.push(a.stack.split('\n')[0]);
+      return parts.length > 0 ? parts.join(' ') : String(a);
+    }
+    try { return JSON.stringify(a); } catch { return String(a); }
+  }
+
   function stringifyArgs(args) {
     const interpolated = interpolateFormatString(args);
     if (interpolated !== null) return interpolated;
-    return args.map(a => {
-      if (typeof a === 'string') return a;
-      try { return JSON.stringify(a); } catch { return String(a); }
-    }).join(' ').slice(0, config.maxMessageLength);
+    return args.map(serializeArg).join(' ').slice(0, config.maxMessageLength);
   }
 
   function matchesIgnorePattern(message) {
@@ -55,8 +66,17 @@ export function installConsoleHook(blackbox) {
         const message = stringifyArgs(args);
         if (message.includes('[BlackBox]')) return;
         if (matchesIgnorePattern(message)) return;
-        const stack = new Error().stack || '';
-        blackbox._recordError({ message, stack, source: 'console.error', context: {} });
+        let stack = new Error().stack || '';
+        // Extract structured context from Error objects in args
+        const ctx = {};
+        for (const a of args) {
+          if (a && typeof a === 'object' && (a instanceof Error || a.code)) {
+            if (a.code) ctx.code = a.code;
+            if (a.path) ctx.path = a.path;
+            if (a.stack) stack = a.stack;
+          }
+        }
+        blackbox._recordError({ message, stack, source: 'console.error', context: ctx });
       } catch { /* BlackBox must never crash the host app */ }
     };
     wrapped[SENTINEL] = true;

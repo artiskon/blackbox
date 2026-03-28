@@ -423,6 +423,17 @@ const blackbox = {
     try {
       if (message && message.includes('[BlackBox]')) return;
 
+      // Check errorExcludePatterns
+      const excludes = _config.errorExcludePatterns || [];
+      if (excludes.length > 0 && message) {
+        if (excludes.some(p => message.includes(p))) return;
+      }
+
+      // Strip webpack/Next.js noise from messages
+      if (message && message.includes('Import trace')) {
+        message = message.split(/\nImport trace/)[0].trim();
+      }
+
       _writingError = true;
       _errorCount++;
 

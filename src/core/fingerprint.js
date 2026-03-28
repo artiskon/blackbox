@@ -5,6 +5,8 @@
 
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const NUMERIC_ID_RE = /\/\d+(?=\/|$)/g;
+const HASH_SEGMENT_RE = /\/[a-zA-Z0-9]{15,}(?=\/|$)/g; // long hash-like path segments
+const FILE_WITH_HASH_RE = /\/[^/]*_[a-f0-9]{6,}\.[a-z]{2,4}$/i; // file_abc123.jpg
 const SKIP_FRAMES_RE = /node_modules|webpack|blackbox|__webpack|hot-update|\(native\)|<anonymous>/i;
 
 function stripQueryParams(path) {
@@ -28,7 +30,30 @@ function normalizePath(path) {
   normalized = normalized.replace(UUID_RE, ':id');
   // Replace numeric path segments with :num
   normalized = normalized.replace(NUMERIC_ID_RE, '/:num');
+  // Replace long hash-like segments (R2/S3 keys, Firestore doc IDs)
+  normalized = normalized.replace(HASH_SEGMENT_RE, '/:hash');
   return normalized;
+}
+
+// Normalize URLs embedded in error messages for fingerprinting
+// e.g., "Resource failed to load: img - https://cdn.example.com/path/abc123/file.jpg"
+// → "Resource failed to load: img - cdn.example.com/path/:hash/*"
+function normalizeMessageUrls(message) {
+  if (!message) return message;
+  return message.replace(/https?:\/\/[^\s"']+/g, (url) => {
+    try {
+      const u = new URL(url);
+      let path = u.pathname;
+      path = path.replace(UUID_RE, ':id');
+      path = path.replace(NUMERIC_ID_RE, '/:num');
+      path = path.replace(HASH_SEGMENT_RE, '/:hash');
+      // Collapse the filename for CDN URLs (the specific file doesn't matter for grouping)
+      path = path.replace(/\/[^/]+\.[a-z]{2,5}$/i, '/*');
+      return u.hostname + path;
+    } catch {
+      return url;
+    }
+  });
 }
 
 function extractTopAppFrame(stack) {
@@ -73,7 +98,7 @@ function hashString(str) {
 }
 
 export function generateFingerprint(message, source, path, stack) {
-  const truncatedMessage = (message || '').slice(0, 100);
+  const truncatedMessage = normalizeMessageUrls((message || '').slice(0, 100));
   const normalizedPath = normalizePath(path);
   const topFrame = extractTopAppFrame(stack);
 

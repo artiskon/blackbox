@@ -396,12 +396,14 @@ function BlackBoxPanel() {
   }
 
   const hasSilences = silences.length > 0;
+  // Badge shows unique error count (deduplicated by source+message)
+  const uniqueKeys = new Set(errors.map(e => `${e.source}:${(e.message || '').slice(0, 80)}`));
+  const uniqueCount = uniqueKeys.size;
   let badgeBg = '#22c55e';
-  if (errorCount >= 6) badgeBg = '#ef4444';
-  else if (errorCount >= 1) badgeBg = '#f59e0b';
+  if (uniqueCount >= 6) badgeBg = '#ef4444';
+  else if (uniqueCount >= 1) badgeBg = '#f59e0b';
 
-  // m1: Badge capped at 99+
-  const badgeText = errorCount > 99 ? '99+' : String(errorCount);
+  const badgeText = uniqueCount > 99 ? '99+' : String(uniqueCount);
 
   if (!isOpen) {
     return (

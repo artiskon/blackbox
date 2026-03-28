@@ -27,6 +27,9 @@ export const DEFAULTS = {
   ],
   sanitize: null,
 
+  // Error filtering — suppress known errors by message substring
+  errorExcludePatterns: [],
+
   // Network noise filtering
   networkExcludePatterns: [
     'firestore.googleapis.com',

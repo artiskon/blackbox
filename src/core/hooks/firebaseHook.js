@@ -1,19 +1,43 @@
 import blackbox from '../blackbox.js';
 
-export async function bbFirestoreOp(operationName, promise) {
+/**
+ * Wraps a Firestore operation promise with error tracking.
+ * @param {string} operationName - e.g., 'getDoc', 'setDoc', 'updateDoc', 'deleteDoc'
+ * @param {Promise} promise - the Firestore operation promise
+ * @param {object} [details] - optional details like { path: 'collection/docId', data: {...} }
+ */
+export async function bbFirestoreOp(operationName, promise, details = {}) {
   try {
     const result = await promise;
     try {
-      blackbox._addBreadcrumb('firebase', { action: operationName, status: 'success' });
+      blackbox._addBreadcrumb('firebase', {
+        action: operationName,
+        status: 'success',
+        path: details.path || null,
+      });
     } catch { /* ignore */ }
     return result;
   } catch (error) {
     try {
+      const ctx = {
+        code: error.code,
+        operation: operationName,
+      };
+      if (details.path) ctx.documentPath = details.path;
+      // Include sanitized write payload for invalid-argument errors
+      if (error.code === 'invalid-argument' && details.data) {
+        try {
+          const keys = Object.keys(details.data);
+          const undefinedKeys = keys.filter(k => details.data[k] === undefined);
+          ctx.writeFields = keys.slice(0, 20);
+          if (undefinedKeys.length > 0) ctx.undefinedFields = undefinedKeys;
+        } catch { /* ignore */ }
+      }
       blackbox._recordError({
-        message: error.message || String(error),
+        message: `Firestore ${operationName} failed: ${error.message || error.code}`,
         stack: error.stack || '',
         source: 'firebase',
-        context: { code: error.code, message: error.message, operation: operationName }
+        context: ctx
       });
     } catch { /* ignore */ }
     throw error;
@@ -45,11 +69,11 @@ export async function bbTrackAuth(auth) {
   }
 }
 
-export async function bbOnSnapshot(query, onNext, onError) {
+export async function bbOnSnapshot(queryRef, onNext, onError) {
   try {
     const { onSnapshot } = await import('firebase/firestore');
     return onSnapshot(
-      query,
+      queryRef,
       (snapshot) => {
         try {
           blackbox._addBreadcrumb('firebase', {
@@ -63,10 +87,10 @@ export async function bbOnSnapshot(query, onNext, onError) {
       (error) => {
         try {
           blackbox._recordError({
-            message: error.message || String(error),
+            message: `Firestore listener error: ${error.message || error.code}`,
             stack: error.stack || '',
             source: 'firebase_listener',
-            context: { code: error.code }
+            context: { code: error.code, message: error.message }
           });
         } catch { /* ignore */ }
         if (onError) {

@@ -150,6 +150,7 @@ async function _doWrite(errorEntry) {
         await fns.updateDoc(cachedRef, {
           occurrences: (currentData?.occurrences || 1) + 1,
           lastSeen: fns.serverTimestamp(),
+          lastSeenSessionId: errorEntry.sessionId,
           breadcrumbs: errorEntry.breadcrumbs || []
         });
         _failureCount = 0;
@@ -182,6 +183,7 @@ async function _doWrite(errorEntry) {
         await fns.updateDoc(existingDoc.ref, {
           occurrences: (currentData.occurrences || 1) + 1,
           lastSeen: fns.serverTimestamp(),
+          lastSeenSessionId: errorEntry.sessionId,
           breadcrumbs: errorEntry.breadcrumbs || []
         });
         _fingerprintCache.set(fingerprint, existingDoc.ref);
@@ -199,6 +201,7 @@ async function _doWrite(errorEntry) {
       fingerprint,
       groupingInputs,
       sessionId: errorEntry.sessionId,
+      lastSeenSessionId: errorEntry.sessionId,
       type: 'error',
       message: errorEntry.message,
       stack: errorEntry.stack || '',
