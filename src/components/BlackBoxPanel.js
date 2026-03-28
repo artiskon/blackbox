@@ -191,11 +191,28 @@ function BlackBoxPanel() {
         bySource: health.bySource,
       };
     }
+    const text = JSON.stringify(report, null, 2);
+    let copied = false;
     try {
-      await navigator.clipboard.writeText(JSON.stringify(report, null, 2));
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    } catch { /* clipboard API blocked (iframe / permissions policy) */ }
+    if (!copied) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'position:fixed;left:-9999px';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        copied = true;
+      } catch { /* fallback also failed */ }
+    }
+    if (copied) {
       setReportCopied(true);
       setTimeout(() => setReportCopied(false), 2000);
-    } catch { /* clipboard not available */ }
+    }
   }
 
   const refresh = useCallback(() => {
