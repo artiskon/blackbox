@@ -190,9 +190,31 @@ function BlackBoxPanel() {
     }
 
     // -- Deduplicate errors --
+    // Group by source+message, but also merge cross-source duplicates
+    // when message and timestamp match (e.g., React re-throws JS errors as console.error)
     const grouped = new Map();
     for (const err of [...errors].reverse()) {
-      const key = `${err.source}:${(err.message || '').slice(0, 80)}`;
+      const msg = (err.message || '').slice(0, 80);
+      const ts = err.metadata?.timestamp || '';
+      const key = `${err.source}:${msg}`;
+      // Check for cross-source duplicate: same message + same timestamp (within 50ms)
+      let merged = false;
+      if (ts) {
+        const tsMs = new Date(ts).getTime();
+        for (const [, existing] of grouped) {
+          if ((existing.message || '').slice(0, 80) === msg || msg.includes((existing.message || '').slice(0, 40))) {
+            const existingTs = new Date(existing.timestamp || 0).getTime();
+            if (Math.abs(tsMs - existingTs) < 50) {
+              existing.count++;
+              existing.sources = existing.sources || [existing.source];
+              if (!existing.sources.includes(err.source)) existing.sources.push(err.source);
+              merged = true;
+              break;
+            }
+          }
+        }
+      }
+      if (merged) continue;
       if (grouped.has(key)) {
         grouped.get(key).count++;
         continue;
