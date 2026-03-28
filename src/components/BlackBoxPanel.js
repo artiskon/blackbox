@@ -157,39 +157,14 @@ function BlackBoxPanel() {
         user: config.user || null,
         firestoreConnected: isConnected,
       },
-      liveErrors: [...errors].reverse().map(err => ({
-        message: err.message,
-        source: err.source,
-        stack: err.stack || null,
-        path: err.metadata?.url || err.url || null,
-        timestamp: err.metadata?.timestamp || null,
-        context: err.context || {},
-        breadcrumbs: (err.breadcrumbs || []).slice(-10),
-      })),
-      suspiciousSilences: silences.slice(0, 10),
+      liveErrors: [...errors].reverse(),
+      suspiciousSilences: silences,
     };
     if (historyLoaded && historyErrors.length > 0) {
-      const groups = new Map();
-      for (const err of historyErrors) {
-        const fp = err.fingerprint || 'unknown';
-        if (!groups.has(fp)) groups.set(fp, { fingerprint: fp, message: err.message, source: err.source, occurrences: 0, lastSeen: err.lastSeen });
-        const g = groups.get(fp);
-        g.occurrences += (err.occurrences || 1);
-        if (err.lastSeen > g.lastSeen) g.lastSeen = err.lastSeen;
-      }
-      report.persistedErrors = {
-        total: historyErrors.length,
-        grouped: [...groups.values()],
-      };
+      report.persistedErrors = historyErrors;
     }
     if (health) {
-      report.health = {
-        verdict: health.verdict,
-        uniqueErrors: health.uniqueErrors,
-        totalOccurrences: health.totalOccurrences,
-        systemicCount: health.systemicCount,
-        bySource: health.bySource,
-      };
+      report.health = health;
     }
     const text = JSON.stringify(report, null, 2);
     let copied = false;
