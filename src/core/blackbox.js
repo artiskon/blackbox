@@ -509,7 +509,7 @@ const blackbox = {
       try {
         // Check if any meaningful followup breadcrumb was added after the click
         const crumbs = _breadcrumbs ? _breadcrumbs.snapshot() : [];
-        const meaningfulTypes = ['network', 'navigation', 'warning', 'error', 'custom'];
+        const meaningfulTypes = ['network', 'navigation', 'warning', 'error', 'custom', 'form'];
         const hasFollowup = crumbs.some(c => {
           if (!meaningfulTypes.includes(c.type)) return false;
           return new Date(c.timestamp).getTime() > clickTime;

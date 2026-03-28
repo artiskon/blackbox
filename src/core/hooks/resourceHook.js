@@ -1,5 +1,7 @@
 export function installResourceHook(blackbox) {
   const resourceTags = new Set(['IMG', 'SCRIPT', 'LINK', 'VIDEO', 'AUDIO', 'SOURCE']);
+  // Use native fetch for probing — avoids triggering our own network hook
+  const nativeFetch = window.fetch.bind(window);
 
   const handler = (event) => {
     try {
@@ -35,7 +37,7 @@ export function installResourceHook(blackbox) {
       // Probe URL with HEAD request to get HTTP status
       // (browser error events don't include status codes)
       if (src && src.startsWith('http')) {
-        fetch(src, { method: 'HEAD', mode: 'no-cors' }).then(res => {
+        nativeFetch(src, { method: 'HEAD', mode: 'no-cors' }).then(res => {
           if (res.type !== 'opaque') {
             context.httpStatus = res.status;
           }
