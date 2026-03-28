@@ -108,10 +108,10 @@ function isSafeEnvironment(config) {
 }
 
 function persistError(errorEntry) {
-  if (_circuitOpen) return;
+  if (_circuitOpen) { console.warn('[BlackBox] Persistence: circuit open, skipping'); return; }
   // _writingError prevents synchronous re-entry (infinite loop guard):
   // if a Firestore write triggers console.error → _recordError → _onError → persistError
-  if (_writingError) return;
+  if (_writingError) { return; }
 
   _writeQueue.push(errorEntry);
   if (!_processing) {
@@ -137,7 +137,10 @@ async function _doWrite(errorEntry) {
     if (!_collectionRef && fns && _db) {
       _collectionRef = fns.collection(_db, _config.collectionName);
     }
-    if (!fns || !_collectionRef) return;
+    if (!fns || !_collectionRef) {
+      console.warn('[BlackBox] Persistence: no fns or collectionRef', { fns: !!fns, ref: !!_collectionRef, db: !!_db });
+      return;
+    }
 
     const { fingerprint, groupingInputs } = generateFingerprint(
       errorEntry.message,
@@ -237,7 +240,9 @@ async function _doWrite(errorEntry) {
         console.error('[BlackBox] Firestore rules block writes to __blackbox. Add rules to allow read/write on the __blackbox collection.');
       }
     }
-  } catch { /* ignore top-level */ } finally {
+  } catch (topErr) {
+    console.warn('[BlackBox] Persistence write error:', topErr?.message);
+  } finally {
     _writingError = false;
   }
 }
