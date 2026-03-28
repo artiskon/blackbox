@@ -133,6 +133,10 @@ async function _doWrite(errorEntry) {
   _writingError = true;
   try {
     const fns = await getFirestoreFns();
+    // Wait for collection ref if not ready yet (async init race)
+    if (!_collectionRef && fns && _db) {
+      _collectionRef = fns.collection(_db, _config.collectionName);
+    }
     if (!fns || !_collectionRef) return;
 
     const { fingerprint, groupingInputs } = generateFingerprint(
