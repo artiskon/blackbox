@@ -1,7 +1,7 @@
 export function installResourceHook(blackbox) {
   const resourceTags = new Set(['IMG', 'SCRIPT', 'LINK', 'VIDEO', 'AUDIO', 'SOURCE']);
   // Use native fetch for probing — avoids triggering our own network hook
-  const nativeFetch = window.fetch.bind(window);
+  const nativeFetch = blackbox._getNativeFetch();
 
   const handler = (event) => {
     try {

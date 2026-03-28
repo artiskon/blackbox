@@ -192,9 +192,14 @@ function BlackBoxPanel() {
     // -- Deduplicate errors --
     // Group by source+message, but also merge cross-source duplicates
     // when message and timestamp match (e.g., React re-throws JS errors as console.error)
+    // Strip "Uncaught ErrorType: " prefix for comparison
+    function stripUncaught(m) {
+      return (m || '').replace(/^Uncaught\s+\w+:\s*/, '');
+    }
     const grouped = new Map();
     for (const err of [...errors].reverse()) {
       const msg = (err.message || '').slice(0, 80);
+      const msgNorm = stripUncaught(msg);
       const ts = err.metadata?.timestamp || '';
       const key = `${err.source}:${msg}`;
       // Check for cross-source duplicate: same message + same timestamp (within 50ms)
@@ -202,7 +207,8 @@ function BlackBoxPanel() {
       if (ts) {
         const tsMs = new Date(ts).getTime();
         for (const [, existing] of grouped) {
-          if ((existing.message || '').slice(0, 80) === msg || msg.includes((existing.message || '').slice(0, 40))) {
+          const existingNorm = stripUncaught((existing.message || '').slice(0, 80));
+          if (msgNorm === existingNorm || msgNorm.includes(existingNorm.slice(0, 40)) || existingNorm.includes(msgNorm.slice(0, 40))) {
             const existingTs = new Date(existing.timestamp || 0).getTime();
             if (Math.abs(tsMs - existingTs) < 50) {
               existing.count++;

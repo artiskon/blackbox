@@ -11,6 +11,9 @@ import { installResourceHook } from './hooks/resourceHook.js';
 import { initPersistence, _resetPersistence } from './persistence.js';
 import { initActivityLog, _resetActivityLog } from './activityLog.js';
 
+// Save native fetch before any hooks replace it
+const _nativeFetch = typeof window !== 'undefined' ? window.fetch.bind(window) : null;
+
 let _initialized = false;
 let _config = {};
 let _sessionId = null;
@@ -491,6 +494,10 @@ const blackbox = {
 
   _stripQueryParams(url) {
     return _stripQueryParams(url);
+  },
+
+  _getNativeFetch() {
+    return _nativeFetch;
   },
 
   _getCurrentPath() {
