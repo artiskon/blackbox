@@ -139,8 +139,64 @@ function BlackBoxPanel() {
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedStacks, setExpandedStacks] = useState(new Set());
   const [activeFilters, setActiveFilters] = useState(new Set(BREADCRUMB_FILTER_TYPES));
+  const [reportCopied, setReportCopied] = useState(false);
 
   const isConnected = blackbox.isConnectedToFirestore();
+
+  async function copyFullReport() {
+    const config = blackbox._getConfig();
+    const report = {
+      _type: 'BlackBox Diagnostic Report',
+      _version: '1.3.1',
+      _generatedAt: new Date().toISOString(),
+      session: {
+        id: blackbox.getSessionId(),
+        errorCount,
+        environment: config.environment || null,
+        tags: config.tags || {},
+        user: config.user || null,
+        firestoreConnected: isConnected,
+      },
+      liveErrors: [...errors].reverse().map(err => ({
+        message: err.message,
+        source: err.source,
+        stack: err.stack || null,
+        path: err.metadata?.url || err.url || null,
+        timestamp: err.metadata?.timestamp || null,
+        context: err.context || {},
+        breadcrumbs: (err.breadcrumbs || []).slice(-10),
+      })),
+      suspiciousSilences: silences.slice(0, 10),
+    };
+    if (historyLoaded && historyErrors.length > 0) {
+      const groups = new Map();
+      for (const err of historyErrors) {
+        const fp = err.fingerprint || 'unknown';
+        if (!groups.has(fp)) groups.set(fp, { fingerprint: fp, message: err.message, source: err.source, occurrences: 0, lastSeen: err.lastSeen });
+        const g = groups.get(fp);
+        g.occurrences += (err.occurrences || 1);
+        if (err.lastSeen > g.lastSeen) g.lastSeen = err.lastSeen;
+      }
+      report.persistedErrors = {
+        total: historyErrors.length,
+        grouped: [...groups.values()],
+      };
+    }
+    if (health) {
+      report.health = {
+        verdict: health.verdict,
+        uniqueErrors: health.uniqueErrors,
+        totalOccurrences: health.totalOccurrences,
+        systemicCount: health.systemicCount,
+        bySource: health.bySource,
+      };
+    }
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(report, null, 2));
+      setReportCopied(true);
+      setTimeout(() => setReportCopied(false), 2000);
+    } catch { /* clipboard not available */ }
+  }
 
   const refresh = useCallback(() => {
     setErrorCount(blackbox.getErrorCount());
@@ -378,12 +434,16 @@ function BlackBoxPanel() {
           <span style={{ fontSize: '10px', color: '#666' }}>
             {isConnected ? 'DB connected' : 'Local only'}
           </span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+            {/* Copy full report */}
+            <span onClick={copyFullReport} title="Copy full diagnostic report as JSON" style={{ cursor: 'pointer', fontSize: '13px', color: reportCopied ? '#22c55e' : '#999', padding: '4px 8px', borderRadius: '4px', transition: 'color 0.15s' }}>
+              {reportCopied ? '✓' : '📋'}
+            </span>
             {/* Expand/collapse toggle */}
             <span onClick={() => setIsExpanded(prev => !prev)} style={{ cursor: 'pointer', fontSize: '16px', color: '#999', padding: '4px 8px', borderRadius: '4px' }}>
               {isExpanded ? '⤡' : '⤢'}
             </span>
-            {/* m3: Larger close button hit area */}
+            {/* Close button */}
             <span onClick={() => { setIsOpen(false); setIsExpanded(false); }} style={{ cursor: 'pointer', fontSize: '16px', color: '#999', padding: '4px 8px', marginRight: '-8px', borderRadius: '4px' }}>✕</span>
           </div>
         </div>

@@ -129,23 +129,22 @@ export async function connectToFirestore(collectionName = '__blackbox') {
     tried.push('1. Emulator (FIRESTORE_EMULATOR_HOST not set)');
   }
 
-  // Method 2: Firebase CLI / Application Default Credentials
-  if (process.env.GOOGLE_APPLICATION_CREDENTIALS || hasDefaultCredentials()) {
-    try {
-      const admin = await import('firebase-admin');
-      const adm = admin.default || admin;
-      const pid = projectId || undefined;
-      if (!adm.apps.length) {
-        adm.initializeApp({ projectId: pid });
-      }
-      const db = adm.firestore();
-      console.log(`[BlackBox] Connected via Firebase Admin (project: ${pid || 'auto'})`);
-      return { db, collectionName, isAdmin: true };
-    } catch (e) {
-      tried.push(`2. Firebase CLI credentials (error: ${e.message})`);
+  // Method 2: Firebase Admin (try unconditionally — SDK handles credential discovery
+  // via GOOGLE_APPLICATION_CREDENTIALS, local files, and GCE metadata server)
+  try {
+    const admin = await import('firebase-admin');
+    const adm = admin.default || admin;
+    const pid = projectId || undefined;
+    if (!adm.apps.length) {
+      adm.initializeApp({ projectId: pid });
     }
-  } else {
-    tried.push('2. Firebase CLI credentials (not found)');
+    const db = adm.firestore();
+    // Verify connection works with a quick test query
+    await db.collection(collectionName).limit(1).get();
+    console.log(`[BlackBox] Connected via Firebase Admin (project: ${pid || 'auto'})`);
+    return { db, collectionName, isAdmin: true };
+  } catch (e) {
+    tried.push(`2. Firebase Admin (error: ${e.message})`);
   }
 
   // Method 3: Service account key file
@@ -196,17 +195,4 @@ export async function connectToFirestore(collectionName = '__blackbox') {
   console.error(`  - If using cloud Firestore: run 'firebase login' first`);
   console.error(`  - Or create a blackbox.config.json with: { "projectId": "your-project-id" }\n`);
   process.exit(1);
-}
-
-function hasDefaultCredentials() {
-  // Check common locations for Firebase CLI credentials
-  const home = process.env.HOME || process.env.USERPROFILE || '';
-  const paths = [
-    path.join(home, '.config', 'firebase', 'application_default_credentials.json'),
-    path.join(home, '.config', 'gcloud', 'application_default_credentials.json'),
-  ];
-  if (process.env.APPDATA) {
-    paths.push(path.join(process.env.APPDATA, 'firebase', 'application_default_credentials.json'));
-  }
-  return paths.some(p => fs.existsSync(p));
 }

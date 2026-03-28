@@ -160,7 +160,66 @@ function BlackBoxPanel() {
   const [searchQuery, setSearchQuery] = useState("");
   const [expandedStacks, setExpandedStacks] = useState(/* @__PURE__ */ new Set());
   const [activeFilters, setActiveFilters] = useState(new Set(BREADCRUMB_FILTER_TYPES));
+  const [reportCopied, setReportCopied] = useState(false);
   const isConnected = blackbox_default.isConnectedToFirestore();
+  async function copyFullReport() {
+    const config = blackbox_default._getConfig();
+    const report = {
+      _type: "BlackBox Diagnostic Report",
+      _version: "1.3.1",
+      _generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      session: {
+        id: blackbox_default.getSessionId(),
+        errorCount,
+        environment: config.environment || null,
+        tags: config.tags || {},
+        user: config.user || null,
+        firestoreConnected: isConnected
+      },
+      liveErrors: [...errors].reverse().map((err) => {
+        var _a, _b;
+        return {
+          message: err.message,
+          source: err.source,
+          stack: err.stack || null,
+          path: ((_a = err.metadata) == null ? void 0 : _a.url) || err.url || null,
+          timestamp: ((_b = err.metadata) == null ? void 0 : _b.timestamp) || null,
+          context: err.context || {},
+          breadcrumbs: (err.breadcrumbs || []).slice(-10)
+        };
+      }),
+      suspiciousSilences: silences.slice(0, 10)
+    };
+    if (historyLoaded && historyErrors.length > 0) {
+      const groups = /* @__PURE__ */ new Map();
+      for (const err of historyErrors) {
+        const fp = err.fingerprint || "unknown";
+        if (!groups.has(fp)) groups.set(fp, { fingerprint: fp, message: err.message, source: err.source, occurrences: 0, lastSeen: err.lastSeen });
+        const g = groups.get(fp);
+        g.occurrences += err.occurrences || 1;
+        if (err.lastSeen > g.lastSeen) g.lastSeen = err.lastSeen;
+      }
+      report.persistedErrors = {
+        total: historyErrors.length,
+        grouped: [...groups.values()]
+      };
+    }
+    if (health) {
+      report.health = {
+        verdict: health.verdict,
+        uniqueErrors: health.uniqueErrors,
+        totalOccurrences: health.totalOccurrences,
+        systemicCount: health.systemicCount,
+        bySource: health.bySource
+      };
+    }
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(report, null, 2));
+      setReportCopied(true);
+      setTimeout(() => setReportCopied(false), 2e3);
+    } catch (e) {
+    }
+  }
   const refresh = useCallback(() => {
     setErrorCount(blackbox_default.getErrorCount());
     setErrors(blackbox_default.getRecentErrors(20));
@@ -408,7 +467,8 @@ function BlackBoxPanel() {
       /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.1)", flexShrink: 0 }, children: [
         /* @__PURE__ */ jsx("span", { style: { fontWeight: "bold", fontSize: "13px", color: "white" }, children: "BlackBox" }),
         /* @__PURE__ */ jsx("span", { style: { fontSize: "10px", color: "#666" }, children: isConnected ? "DB connected" : "Local only" }),
-        /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", gap: "4px" }, children: [
+        /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", gap: "2px" }, children: [
+          /* @__PURE__ */ jsx("span", { onClick: copyFullReport, title: "Copy full diagnostic report as JSON", style: { cursor: "pointer", fontSize: "13px", color: reportCopied ? "#22c55e" : "#999", padding: "4px 8px", borderRadius: "4px", transition: "color 0.15s" }, children: reportCopied ? "\u2713" : "\u{1F4CB}" }),
           /* @__PURE__ */ jsx("span", { onClick: () => setIsExpanded((prev) => !prev), style: { cursor: "pointer", fontSize: "16px", color: "#999", padding: "4px 8px", borderRadius: "4px" }, children: isExpanded ? "\u2921" : "\u2922" }),
           /* @__PURE__ */ jsx("span", { onClick: () => {
             setIsOpen(false);
