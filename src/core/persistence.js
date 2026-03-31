@@ -23,6 +23,7 @@ async function getFirestoreFns() {
       collection: mod.collection,
       addDoc: mod.addDoc,
       updateDoc: mod.updateDoc,
+      deleteDoc: mod.deleteDoc,
       query: mod.query,
       where: mod.where,
       limit: mod.limit,

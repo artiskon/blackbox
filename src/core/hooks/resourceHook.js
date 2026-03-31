@@ -36,26 +36,20 @@ export function installResourceHook(blackbox) {
 
       // Probe URL with HEAD request to get HTTP status
       // (browser error events don't include status codes)
-      if (src && src.startsWith('http')) {
-        nativeFetch(src, { method: 'HEAD', mode: 'no-cors' }).then(res => {
-          if (res.type !== 'opaque') {
-            context.httpStatus = res.status;
-          }
-          // Record with status
-          blackbox._recordError({
-            message: `Resource failed to load: ${tagName} - ${src}`,
-            stack: '',
-            source: 'resource_load',
-            context
-          });
+      if (src && src.startsWith('http') && nativeFetch) {
+        // Try cors first (gets real status), fall back to no-cors
+        nativeFetch(src, { method: 'HEAD', mode: 'cors' }).then(res => {
+          context.httpStatus = res.status;
+          blackbox._recordError({ message: `Resource failed to load: ${tagName} - ${src}`, stack: '', source: 'resource_load', context });
         }).catch(() => {
-          context.httpStatus = 0;
-          context.statusHint = 'unreachable';
-          blackbox._recordError({
-            message: `Resource failed to load: ${tagName} - ${src}`,
-            stack: '',
-            source: 'resource_load',
-            context
+          // CORS blocked — try no-cors to distinguish reachable from unreachable
+          nativeFetch(src, { method: 'HEAD', mode: 'no-cors' }).then(() => {
+            context.statusHint = 'cors_blocked';
+            blackbox._recordError({ message: `Resource failed to load: ${tagName} - ${src}`, stack: '', source: 'resource_load', context });
+          }).catch(() => {
+            context.httpStatus = 0;
+            context.statusHint = 'unreachable';
+            blackbox._recordError({ message: `Resource failed to load: ${tagName} - ${src}`, stack: '', source: 'resource_load', context });
           });
         });
       } else {

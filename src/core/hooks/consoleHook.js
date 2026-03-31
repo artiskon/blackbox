@@ -2,8 +2,8 @@ export function installConsoleHook(blackbox) {
   const config = blackbox._getConfig();
   const ignorePatterns = config.consoleIgnorePatterns || [];
 
-  const nativeError = console.error.bind(console);
-  const nativeWarn = console.warn.bind(console);
+  const nativeError = console.error;
+  const nativeWarn = console.warn;
 
   function interpolateFormatString(args) {
     if (args.length < 2 || typeof args[0] !== 'string') return null;
@@ -28,7 +28,6 @@ export function installConsoleHook(blackbox) {
 
   function serializeArg(a) {
     if (typeof a === 'string') return a;
-    // Extract useful properties from Error/FirebaseError objects
     if (a && typeof a === 'object' && (a instanceof Error || a.code || a.message)) {
       const parts = [];
       if (a.message) parts.push(a.message);
@@ -50,60 +49,80 @@ export function installConsoleHook(blackbox) {
     return ignorePatterns.some(pattern => message.includes(pattern));
   }
 
-  // Use a sentinel property to detect if our hook is still active.
-  // React/Next.js dev mode can re-wrap console.error (HMR, error overlay,
-  // component stack injection), overwriting our patch. We re-install on
-  // each tick via a polling check.
+  // BB recording flag — prevents re-entry from nested wrappers
+  let _recording = false;
+
+  function bbHandleError(...args) {
+    if (_recording) return;
+    _recording = true;
+    try {
+      const message = stringifyArgs(args);
+      if (message.includes('[BlackBox]')) return;
+      if (matchesIgnorePattern(message)) return;
+      let stack = new Error().stack || '';
+      const ctx = {};
+      for (const a of args) {
+        if (a && typeof a === 'object' && (a instanceof Error || a.code)) {
+          if (a.code) ctx.code = a.code;
+          if (a.path) ctx.path = a.path;
+          if (a.stack) stack = a.stack;
+        }
+      }
+      blackbox._recordError({ message, stack, source: 'console.error', context: ctx });
+    } catch { /* BlackBox must never crash the host app */ }
+    finally { _recording = false; }
+  }
+
+  function bbHandleWarn(...args) {
+    if (_recording) return;
+    _recording = true;
+    try {
+      const message = stringifyArgs(args);
+      if (message.includes('[BlackBox]')) return;
+      if (matchesIgnorePattern(message)) return;
+      blackbox._addBreadcrumb('warning', { message });
+    } catch { /* BlackBox must never crash the host app */ }
+    finally { _recording = false; }
+  }
+
+  // Patch strategy: replace console.error/warn with a function that:
+  // 1. Calls whatever console.error currently points to (may be React's wrapper)
+  //    but through the NATIVE function to avoid chain growth
+  // 2. Runs BB recording logic
+  // On re-patch: we always replace console.error fresh, never wrapping our own wrapper.
+
   const SENTINEL = '__bb_hooked';
 
   function patchError() {
-    // Already patched — skip
     if (console.error[SENTINEL]) return;
-    const current = console.error;
+    // Capture the current non-BB wrapper (e.g., React's)
+    const thirdPartyWrapper = console.error;
     const wrapped = function (...args) {
-      current.apply(console, args);
-      try {
-        const message = stringifyArgs(args);
-        if (message.includes('[BlackBox]')) return;
-        if (matchesIgnorePattern(message)) return;
-        let stack = new Error().stack || '';
-        // Extract structured context from Error objects in args
-        const ctx = {};
-        for (const a of args) {
-          if (a && typeof a === 'object' && (a instanceof Error || a.code)) {
-            if (a.code) ctx.code = a.code;
-            if (a.path) ctx.path = a.path;
-            if (a.stack) stack = a.stack;
-          }
-        }
-        blackbox._recordError({ message, stack, source: 'console.error', context: ctx });
-      } catch { /* BlackBox must never crash the host app */ }
+      // Call the third-party wrapper (which calls native internally)
+      thirdPartyWrapper.apply(console, args);
+      bbHandleError(...args);
     };
     wrapped[SENTINEL] = true;
+    // Store ref so re-patch can detect if we're still the top-level
+    wrapped.__bb_fn = bbHandleError;
     console.error = wrapped;
   }
 
   function patchWarn() {
     if (console.warn[SENTINEL]) return;
-    const current = console.warn;
+    const thirdPartyWrapper = console.warn;
     const wrapped = function (...args) {
-      current.apply(console, args);
-      try {
-        const message = stringifyArgs(args);
-        if (message.includes('[BlackBox]')) return;
-        if (matchesIgnorePattern(message)) return;
-        blackbox._addBreadcrumb('warning', { message });
-      } catch { /* BlackBox must never crash the host app */ }
+      thirdPartyWrapper.apply(console, args);
+      bbHandleWarn(...args);
     };
     wrapped[SENTINEL] = true;
+    wrapped.__bb_fn = bbHandleWarn;
     console.warn = wrapped;
   }
 
-  // Initial patch
   patchError();
   patchWarn();
 
-  // Re-check every 2s in case React/Next.js re-wraps console methods
   const repatchInterval = setInterval(() => {
     patchError();
     patchWarn();

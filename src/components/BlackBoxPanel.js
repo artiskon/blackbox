@@ -614,10 +614,11 @@ function BlackBoxPanel() {
                   {errors.length === 0 ? 'No errors captured' : 'No matching errors'}
                 </div>
               ) : filteredLiveErrors.map((err, i) => {
-                const isExp = expandedError === i;
+                const errKey = `${err.source}:${(err.message || '').slice(0, 60)}:${err.metadata?.timestamp || i}`;
+                const isExp = expandedError === errKey;
                 return (
-                  <div key={i}>
-                    <div onClick={() => setExpandedError(isExp ? null : i)} style={{ padding: '8px 14px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.05)', background: isExp ? 'rgba(255,255,255,0.05)' : 'transparent' }}>
+                  <div key={errKey}>
+                    <div onClick={() => setExpandedError(isExp ? null : errKey)} style={{ padding: '8px 14px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.05)', background: isExp ? 'rgba(255,255,255,0.05)' : 'transparent' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
                         <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '3px', background: sourceColor(err.source), color: 'white', fontWeight: 'bold', textTransform: 'uppercase', flexShrink: 0 }}>{err.source || 'error'}</span>
                         <span style={{ fontSize: '10px', opacity: 0.4, marginLeft: 'auto', flexShrink: 0 }}>{timeAgo(err.metadata?.timestamp)}</span>

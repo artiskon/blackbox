@@ -32,12 +32,12 @@ Look for a BlackBox init call in the app (usually in a component or layout). It 
 ```tsx
 import blackbox from '@artiskon/blackbox';
 import { db } from '@/lib/firebase';
-import { collection, addDoc, updateDoc, query, where, limit, getDocs, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { collection, addDoc, updateDoc, deleteDoc, query, where, limit, getDocs, serverTimestamp, Timestamp } from 'firebase/firestore';
 
 blackbox.init({
   enabled: true,
   db,
-  firestoreFns: { collection, addDoc, updateDoc, query, where, limit, getDocs, serverTimestamp, Timestamp }
+  firestoreFns: { collection, addDoc, updateDoc, deleteDoc, query, where, limit, getDocs, serverTimestamp, Timestamp }
 });
 ```
 

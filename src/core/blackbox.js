@@ -378,14 +378,15 @@ const blackbox = {
       const { getCollectionRef, getFirestoreFunctions } = await import('./persistence.js');
       const fns = await getFirestoreFunctions();
       const ref = getCollectionRef();
-      if (!fns || !ref) return { success: false, error: 'Not connected to Firestore' };
+      if (!fns || !ref || !fns.deleteDoc) return { success: false, error: 'Not connected to Firestore' };
 
-      const snapshot = await fns.getDocs(ref);
+      // Only delete error documents, not activity documents
+      const errorQuery = fns.query(ref, fns.where('type', '==', 'error'));
+      const snapshot = await fns.getDocs(errorQuery);
       let deleted = 0;
-      const { deleteDoc } = await import('firebase/firestore');
       for (const doc of snapshot.docs) {
         try {
-          await deleteDoc(doc.ref);
+          await fns.deleteDoc(doc.ref);
           deleted++;
         } catch { /* skip */ }
       }
@@ -485,11 +486,13 @@ const blackbox = {
   },
 
   _onError(callback) {
-    _onErrorCallback = callback;
+    const prev = _onErrorCallback;
+    _onErrorCallback = prev ? (entry) => { prev(entry); callback(entry); } : callback;
   },
 
   _onActivityFlush(callback) {
-    _onActivityFlushCallback = callback;
+    const prev = _onActivityFlushCallback;
+    _onActivityFlushCallback = prev ? (data) => { prev(data); callback(data); } : callback;
   },
 
   _stripQueryParams(url) {
@@ -538,6 +541,9 @@ const blackbox = {
           blackbox._addBreadcrumb('suspicious_silence', silence);
         }
       } catch { /* ignore */ }
+      // Clean up: remove this timer ID from the list
+      const idx = _pendingSilenceChecks.indexOf(checkId);
+      if (idx !== -1) _pendingSilenceChecks.splice(idx, 1);
     }, _config.silenceDetectionDelay);
 
     _pendingSilenceChecks.push(checkId);

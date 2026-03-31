@@ -1,6 +1,6 @@
 {
   "name": "@artiskon/blackbox",
-  "version": "1.4.0",
+  "version": "1.4.3",
   "description": "Dev-time error monitoring and activity recording for React/Firebase apps. Built for AI-assisted debugging.",
   "type": "module",
   "main": "dist/index.js",

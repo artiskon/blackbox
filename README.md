@@ -12,11 +12,11 @@ npm install github:artiskon/blackbox
 import blackbox from '@artiskon/blackbox';
 import { BlackBoxProvider, BlackBoxPanel } from '@artiskon/blackbox/components';
 import { db } from './firebase';
-import { collection, addDoc, updateDoc, query, where, limit, getDocs, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { collection, addDoc, updateDoc, deleteDoc, query, where, limit, getDocs, serverTimestamp, Timestamp } from 'firebase/firestore';
 
 blackbox.init({
   db,
-  firestoreFns: { collection, addDoc, updateDoc, query, where, limit, getDocs, serverTimestamp, Timestamp }
+  firestoreFns: { collection, addDoc, updateDoc, deleteDoc, query, where, limit, getDocs, serverTimestamp, Timestamp }
 });
 
 function App() {

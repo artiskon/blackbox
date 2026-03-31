@@ -7,8 +7,16 @@ export function installNetworkHook(blackbox) {
     return excludePatterns.some(pattern => url.includes(pattern));
   }
 
+  // Prevent double-recording when wrapper chain grows from HMR re-patching
+  let _bbRecording = false;
+
   function createFetchWrapper(baseFetch) {
     const wrapped = async function (input, init = {}) {
+      // If already being recorded by an outer BB wrapper in the chain, just pass through
+      if (_bbRecording) {
+        return baseFetch(input, init);
+      }
+
       const method = (init.method || 'GET').toUpperCase();
       let url = '';
       try {
@@ -22,6 +30,8 @@ export function installNetworkHook(blackbox) {
         return baseFetch(input, init);
       }
 
+      _bbRecording = true;
+
       const start = Date.now();
       let response;
       blackbox._incrementPendingFetches();
@@ -30,6 +40,7 @@ export function installNetworkHook(blackbox) {
         response = await baseFetch(input, init);
       } catch (err) {
         blackbox._decrementPendingFetches();
+        _bbRecording = false;
         try {
           const duration = Date.now() - start;
           blackbox._addBreadcrumb('network', { method, url, status: 0, duration, ok: false, error: err.message });
@@ -102,6 +113,7 @@ export function installNetworkHook(blackbox) {
       } catch { /* ignore */ }
 
       blackbox._decrementPendingFetches();
+      _bbRecording = false;
       return response;
     };
     wrapped.__bb_hooked = true;

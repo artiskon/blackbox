@@ -100,8 +100,10 @@ async function main() {
     if (all) {
       const devLogsDir = path.join(process.cwd(), 'dev-logs');
       if (fs.existsSync(devLogsDir)) {
-        const files = fs.readdirSync(devLogsDir);
-        for (const file of files) {
+        const bbFiles = fs.readdirSync(devLogsDir).filter(f =>
+          f.startsWith('blackbox') || f.startsWith('bb-') || f.startsWith('.bb-')
+        );
+        for (const file of bbFiles) {
           try {
             fs.unlinkSync(path.join(devLogsDir, file));
           } catch { /* skip */ }
