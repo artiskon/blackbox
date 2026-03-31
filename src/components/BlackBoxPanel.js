@@ -140,6 +140,7 @@ function BlackBoxPanel() {
   const [expandedStacks, setExpandedStacks] = useState(new Set());
   const [activeFilters, setActiveFilters] = useState(new Set(BREADCRUMB_FILTER_TYPES));
   const [reportCopied, setReportCopied] = useState(false);
+  const [reportText, setReportText] = useState(null);
 
   const isConnected = blackbox.isConnectedToFirestore();
 
@@ -318,6 +319,9 @@ function BlackBoxPanel() {
     if (copied) {
       setReportCopied(true);
       setTimeout(() => setReportCopied(false), 2000);
+    } else {
+      // Both clipboard methods blocked — show selectable text overlay
+      setReportText(text);
     }
   }
 
@@ -836,6 +840,24 @@ function BlackBoxPanel() {
               <button onClick={() => setShowClearConfirm(false)} style={cancelBtn}>Cancel</button>
               <button onClick={handleClearPersisted} disabled={clearing} style={dangerBtn}>{clearing ? 'Deleting...' : 'Yes, Delete All'}</button>
             </div>
+          </div>
+        )}
+        {reportText && (
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.95)', display: 'flex', flexDirection: 'column', borderRadius: '12px', padding: '12px', gap: '8px', zIndex: 10 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: '12px', color: '#ccc', fontWeight: 'bold' }}>Select All + Copy (Ctrl+A, Ctrl+C)</span>
+              <span onClick={() => setReportText(null)} style={{ cursor: 'pointer', color: '#999', fontSize: '16px', padding: '2px 6px' }}>✕</span>
+            </div>
+            <textarea
+              readOnly
+              value={reportText}
+              onFocus={(e) => e.target.select()}
+              style={{
+                flex: 1, width: '100%', background: '#111', color: '#9fef00', border: '1px solid #333',
+                borderRadius: '6px', padding: '8px', fontSize: '10px', fontFamily: 'monospace',
+                resize: 'none', outline: 'none',
+              }}
+            />
           </div>
         )}
       </div>
