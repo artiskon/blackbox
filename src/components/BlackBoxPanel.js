@@ -137,6 +137,7 @@ function BlackBoxPanel() {
 
   // Feature 2D states
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
   const [expandedStacks, setExpandedStacks] = useState(new Set());
   const [activeFilters, setActiveFilters] = useState(new Set(BREADCRUMB_FILTER_TYPES));
   const [reportCopied, setReportCopied] = useState(false);
@@ -234,6 +235,7 @@ function BlackBoxPanel() {
         path: err.path || err.url,
         timestamp: err.metadata?.timestamp,
         count: 1,
+        ...(err._stormCount ? { storm: true, stormCount: err._stormCount } : {}),
       });
       if (err.context && Object.keys(err.context).length > 0) {
         const ctx = { ...err.context };
@@ -263,7 +265,7 @@ function BlackBoxPanel() {
     // -- Build report --
     const report = stripNulls({
       _type: 'BlackBox Diagnostic Report',
-      _version: '1.4.0',
+      _version: '1.5.0',
       _generatedAt: new Date().toISOString(),
       _instructions: 'Errors are deduplicated (count = occurrences). Breadcrumbs are the single chronological trail of user actions for the session. Silences are buttons clicked with no followup (possible broken UI). History contains persisted errors from Firestore (grouped by fingerprint). Health is a 24h summary.',
       session: stripNulls({
@@ -575,24 +577,45 @@ function BlackBoxPanel() {
       )}
 
       <div data-bb-panel style={panelStyle}>
-        {/* Header — M2: removed session ID */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.1)', flexShrink: 0 }}>
-          <span style={{ fontWeight: 'bold', fontSize: '13px', color: 'white' }}>BlackBox</span>
-          <span style={{ fontSize: '10px', color: '#666' }}>
-            {isConnected ? 'DB connected' : 'Local only'}
-          </span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
-            {/* Copy full report */}
-            <span onClick={copyFullReport} title="Copy full diagnostic report as JSON" style={{ cursor: 'pointer', fontSize: '13px', color: reportCopied ? '#22c55e' : '#999', padding: '4px 8px', borderRadius: '4px', transition: 'color 0.15s' }}>
-              {reportCopied ? '✓' : '📋'}
-            </span>
-            {/* Expand/collapse toggle */}
-            <span onClick={() => setIsExpanded(prev => !prev)} style={{ cursor: 'pointer', fontSize: '16px', color: '#999', padding: '4px 8px', borderRadius: '4px' }}>
-              {isExpanded ? '⤡' : '⤢'}
-            </span>
-            {/* Close button */}
-            <span onClick={() => { setIsOpen(false); setIsExpanded(false); }} style={{ cursor: 'pointer', fontSize: '16px', color: '#999', padding: '4px 8px', marginRight: '-8px', borderRadius: '4px' }}>✕</span>
-          </div>
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.1)', flexShrink: 0, gap: '8px' }}>
+          {searchOpen ? (
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <input
+                ref={el => el && el.focus()}
+                type="text"
+                placeholder="Search errors..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Escape') { setSearchOpen(false); setSearchQuery(''); } }}
+                style={{ ...searchInputStyle, margin: 0 }}
+              />
+              <span onClick={() => { setSearchOpen(false); setSearchQuery(''); }} style={{ cursor: 'pointer', fontSize: '14px', color: '#999', padding: '4px', flexShrink: 0 }}>✕</span>
+            </div>
+          ) : (
+            <>
+              <span style={{ fontWeight: 'bold', fontSize: '13px', color: 'white' }}>BlackBox</span>
+              <span style={{ fontSize: '10px', color: '#666' }}>
+                {isConnected ? 'DB connected' : 'Local only'}
+              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+                {/* Search toggle */}
+                <span onClick={() => setSearchOpen(true)} title="Search errors" style={{ cursor: 'pointer', fontSize: '13px', color: '#999', padding: '4px 8px', borderRadius: '4px', transition: 'color 0.15s' }}>
+                  🔍
+                </span>
+                {/* Copy full report */}
+                <span onClick={copyFullReport} title="Copy full diagnostic report as JSON" style={{ cursor: 'pointer', fontSize: '13px', color: reportCopied ? '#22c55e' : '#999', padding: '4px 8px', borderRadius: '4px', transition: 'color 0.15s' }}>
+                  {reportCopied ? '✓' : '📋'}
+                </span>
+                {/* Expand/collapse toggle */}
+                <span onClick={() => setIsExpanded(prev => !prev)} style={{ cursor: 'pointer', fontSize: '16px', color: '#999', padding: '4px 8px', borderRadius: '4px' }}>
+                  {isExpanded ? '⤡' : '⤢'}
+                </span>
+                {/* Close button */}
+                <span onClick={() => { setIsOpen(false); setIsExpanded(false); }} style={{ cursor: 'pointer', fontSize: '16px', color: '#999', padding: '4px 8px', marginRight: '-8px', borderRadius: '4px' }}>✕</span>
+              </div>
+            </>
+          )}
         </div>
 
         {/* Tabs — m2: hover states */}
@@ -617,16 +640,6 @@ function BlackBoxPanel() {
         <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
           {tab === 'live' && (
             <div>
-              {/* Search input */}
-              <div style={{ padding: '8px 14px 4px' }}>
-                <input
-                  type="text"
-                  placeholder="Search errors..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  style={searchInputStyle}
-                />
-              </div>
               {filteredLiveErrors.length === 0 ? (
                 <div style={{ padding: '24px 14px', textAlign: 'center', color: '#22c55e' }}>
                   {errors.length === 0 ? 'No errors captured' : 'No matching errors'}
@@ -697,16 +710,6 @@ function BlackBoxPanel() {
                     </select>
                   </div>
 
-                  {/* Search input for history */}
-                  <div style={{ padding: '8px 14px 4px' }}>
-                    <input
-                      type="text"
-                      placeholder="Search saved errors..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      style={searchInputStyle}
-                    />
-                  </div>
 
                   {/* Delete success feedback — M5 */}
                   {deleteSuccess && (

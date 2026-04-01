@@ -1,11 +1,11 @@
 'use client';
 import {
   blackbox_default
-} from "./chunk-FL5V6FN3.js";
+} from "./chunk-UGFKFJI7.js";
 import {
   __spreadProps,
   __spreadValues
-} from "./chunk-VVEOEWI2.js";
+} from "./chunk-DTHOA46Q.js";
 
 // src/components/BlackBoxPanel.js
 import { useState, useEffect, useCallback } from "react";
@@ -158,66 +158,161 @@ function BlackBoxPanel() {
   const [clearSessionFeedback, setClearSessionFeedback] = useState(false);
   const [deleteSuccess, setDeleteSuccess] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   const [expandedStacks, setExpandedStacks] = useState(/* @__PURE__ */ new Set());
   const [activeFilters, setActiveFilters] = useState(new Set(BREADCRUMB_FILTER_TYPES));
   const [reportCopied, setReportCopied] = useState(false);
+  const [reportText, setReportText] = useState(null);
+  const [copiedErrorKey, setCopiedErrorKey] = useState(null);
   const isConnected = blackbox_default.isConnectedToFirestore();
   async function copyFullReport() {
+    var _a, _b;
     const config = blackbox_default._getConfig();
-    const report = {
+    function cleanStack(stack) {
+      if (!stack) return void 0;
+      return stack.split("\n").slice(0, 5).map(
+        (l) => l.replace(/https?:\/\/[^/]+\/_next\/static\/chunks\//, "").replace(/https?:\/\/[^/]+\//, "/")
+      ).join("\n");
+    }
+    function stripNulls(obj) {
+      const out = {};
+      for (const [k, v] of Object.entries(obj)) {
+        if (v === null || v === void 0) continue;
+        if (typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 0) continue;
+        if (Array.isArray(v) && v.length === 0) continue;
+        out[k] = v;
+      }
+      return out;
+    }
+    function compactBreadcrumb(bc) {
+      const out = { type: bc.type, time: bc.timestamp };
+      if (bc.type === "click") {
+        out.el = `${bc.tag || "element"}${bc.id ? "#" + bc.id : ""}${bc.dataBb ? "[data-bb=" + bc.dataBb + "]" : ""}`;
+        if (bc.text) out.text = bc.text.slice(0, 30);
+      } else if (bc.type === "navigation") {
+        out.from = bc.from;
+        out.to = bc.to;
+      } else if (bc.type === "network") {
+        out.req = `${bc.method || "GET"} ${bc.url || ""} \u2192 ${bc.status || "?"}`;
+        if (bc.duration) out.ms = bc.duration;
+      } else if (bc.type === "error") {
+        out.msg = (bc.message || "").slice(0, 60);
+        if (bc.source) out.source = bc.source;
+      } else if (bc.type === "suspicious_silence") {
+        const el = bc.clickedElement;
+        out.el = el ? `${el.tag || "?"}${el.dataBb ? "[data-bb=" + el.dataBb + "]" : ""} "${(el.text || "").slice(0, 20)}"` : "?";
+      } else if (bc.type === "custom") {
+        out.action = bc.action;
+      } else {
+        out.action = bc.action || bc.message || "";
+      }
+      if (bc.repeatCount > 1) out.repeat = bc.repeatCount;
+      return out;
+    }
+    function stripUncaught(m) {
+      return (m || "").replace(/^Uncaught\s+\w+:\s*/, "");
+    }
+    const grouped = /* @__PURE__ */ new Map();
+    for (const err of [...errors].reverse()) {
+      const msg = (err.message || "").slice(0, 80);
+      const msgNorm = stripUncaught(msg);
+      const ts = ((_a = err.metadata) == null ? void 0 : _a.timestamp) || "";
+      const key = `${err.source}:${msg}`;
+      let merged = false;
+      if (ts) {
+        const tsMs = new Date(ts).getTime();
+        for (const [, existing] of grouped) {
+          const existingNorm = stripUncaught((existing.message || "").slice(0, 80));
+          if (msgNorm === existingNorm || msgNorm.includes(existingNorm.slice(0, 40)) || existingNorm.includes(msgNorm.slice(0, 40))) {
+            const existingTs = new Date(existing.timestamp || 0).getTime();
+            if (Math.abs(tsMs - existingTs) < 50) {
+              existing.count++;
+              existing.sources = existing.sources || [existing.source];
+              if (!existing.sources.includes(err.source)) existing.sources.push(err.source);
+              merged = true;
+              break;
+            }
+          }
+        }
+      }
+      if (merged) continue;
+      if (grouped.has(key)) {
+        grouped.get(key).count++;
+        continue;
+      }
+      const entry = stripNulls(__spreadValues({
+        message: err.message,
+        source: err.source,
+        stack: cleanStack(err.stack),
+        path: err.path || err.url,
+        timestamp: (_b = err.metadata) == null ? void 0 : _b.timestamp,
+        count: 1
+      }, err._stormCount ? { storm: true, stormCount: err._stormCount } : {}));
+      if (err.context && Object.keys(err.context).length > 0) {
+        const ctx = __spreadValues({}, err.context);
+        delete ctx.responseBody;
+        delete ctx.requestBody;
+        if (err.source === "network") {
+          delete ctx.status;
+          delete ctx.method;
+          delete ctx.url;
+        }
+        if (Object.keys(ctx).length > 0) entry.context = ctx;
+      }
+      grouped.set(key, entry);
+    }
+    const compactSilences = silences.map((s) => {
+      const el = s.clickedElement;
+      return {
+        element: el ? `${el.tag || "?"}${el.id ? "#" + el.id : ""}${el.dataBb ? "[data-bb=" + el.dataBb + "]" : ""} "${(el.text || "").slice(0, 30)}"` : "?",
+        timestamp: s.timestamp,
+        waitedMs: s.waitedMs
+      };
+    });
+    const report = stripNulls({
       _type: "BlackBox Diagnostic Report",
-      _version: "1.3.1",
+      _version: "1.5.0",
       _generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      session: {
+      _instructions: "Errors are deduplicated (count = occurrences). Breadcrumbs are the single chronological trail of user actions for the session. Silences are buttons clicked with no followup (possible broken UI). History contains persisted errors from Firestore (grouped by fingerprint). Health is a 24h summary.",
+      session: stripNulls({
         id: blackbox_default.getSessionId(),
         errorCount,
-        environment: config.environment || null,
-        tags: config.tags || {},
-        user: config.user || null,
+        environment: config.environment,
+        tags: config.tags,
+        user: config.user,
         firestoreConnected: isConnected
-      },
-      liveErrors: [...errors].reverse().map((err) => {
-        var _a, _b;
-        return {
-          message: err.message,
-          source: err.source,
-          stack: err.stack || null,
-          path: ((_a = err.metadata) == null ? void 0 : _a.url) || err.url || null,
-          timestamp: ((_b = err.metadata) == null ? void 0 : _b.timestamp) || null,
-          context: err.context || {},
-          breadcrumbs: (err.breadcrumbs || []).slice(-10)
-        };
       }),
-      suspiciousSilences: silences.slice(0, 10)
-    };
+      errors: [...grouped.values()],
+      silences: compactSilences.length > 0 ? compactSilences : void 0,
+      breadcrumbs: (blackbox_default.getBreadcrumbs ? blackbox_default.getBreadcrumbs() : []).map(compactBreadcrumb)
+    });
     if (historyLoaded && historyErrors.length > 0) {
-      const groups = /* @__PURE__ */ new Map();
+      const hGroups = /* @__PURE__ */ new Map();
       for (const err of historyErrors) {
         const fp = err.fingerprint || "unknown";
-        if (!groups.has(fp)) groups.set(fp, { fingerprint: fp, message: err.message, source: err.source, occurrences: 0, lastSeen: err.lastSeen });
-        const g = groups.get(fp);
+        if (!hGroups.has(fp)) hGroups.set(fp, { message: err.message, source: err.source, fingerprint: fp, occurrences: 0, lastSeen: err.lastSeen });
+        const g = hGroups.get(fp);
         g.occurrences += err.occurrences || 1;
         if (err.lastSeen > g.lastSeen) g.lastSeen = err.lastSeen;
       }
-      report.persistedErrors = {
-        total: historyErrors.length,
-        grouped: [...groups.values()]
-      };
+      report.history = [...hGroups.values()];
     }
     if (health) {
-      report.health = {
+      report.health = stripNulls({
         verdict: health.verdict,
         uniqueErrors: health.uniqueErrors,
         totalOccurrences: health.totalOccurrences,
         systemicCount: health.systemicCount,
         bySource: health.bySource
-      };
+      });
     }
-    try {
-      await navigator.clipboard.writeText(JSON.stringify(report, null, 2));
+    const text = JSON.stringify(report, null, 2);
+    const copied = await copyToClipboard(text);
+    if (copied) {
       setReportCopied(true);
       setTimeout(() => setReportCopied(false), 2e3);
-    } catch (e) {
+    } else {
+      setReportText(text);
     }
   }
   const refresh = useCallback(() => {
@@ -268,16 +363,18 @@ function BlackBoxPanel() {
   }
   async function handleClearPersisted() {
     setClearing(true);
-    await blackbox_default.clearPersistedErrors();
+    const result = await blackbox_default.clearPersistedErrors();
     setClearing(false);
     setShowClearConfirm(false);
-    setHistoryErrors([]);
-    setHistoryLoaded(false);
-    setHealth(null);
-    setTimeline([]);
-    setTimelineLoaded(false);
-    setDeleteSuccess(true);
-    setTimeout(() => setDeleteSuccess(false), 3e3);
+    if (result.success) {
+      setHistoryErrors([]);
+      setHistoryLoaded(false);
+      setHealth(null);
+      setTimeline([]);
+      setTimelineLoaded(false);
+      setDeleteSuccess(true);
+      setTimeout(() => setDeleteSuccess(false), 3e3);
+    }
   }
   function toggleStack(key) {
     setExpandedStacks((prev) => {
@@ -304,23 +401,48 @@ function BlackBoxPanel() {
     const path = (((_a = err.metadata) == null ? void 0 : _a.url) || ((_b = err.metadata) == null ? void 0 : _b.path) || err.path || "").toLowerCase();
     return msg.includes(q) || src.includes(q) || path.includes(q);
   }
-  async function copyAsJSON(err) {
+  function copyToClipboard(text) {
+    var _a;
+    if ((_a = navigator.clipboard) == null ? void 0 : _a.writeText) {
+      return navigator.clipboard.writeText(text).then(() => true).catch(() => fallbackCopy(text));
+    }
+    return Promise.resolve(fallbackCopy(text));
+  }
+  function fallbackCopy(text) {
     try {
-      await navigator.clipboard.writeText(errorToJSON(err));
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.cssText = "position:fixed;left:-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      return true;
     } catch (e) {
+      return false;
     }
   }
-  async function copyAsMarkdown(err) {
-    try {
-      await navigator.clipboard.writeText(errorToMarkdown(err));
-    } catch (e) {
+  async function copyAsJSON(err, key) {
+    const ok = await copyToClipboard(errorToJSON(err));
+    if (ok) {
+      setCopiedErrorKey(key + ":json");
+      setTimeout(() => setCopiedErrorKey(null), 1500);
+    }
+  }
+  async function copyAsMarkdown(err, key) {
+    const ok = await copyToClipboard(errorToMarkdown(err));
+    if (ok) {
+      setCopiedErrorKey(key + ":md");
+      setTimeout(() => setCopiedErrorKey(null), 1500);
     }
   }
   const hasSilences = silences.length > 0;
+  const uniqueKeys = new Set(errors.map((e) => `${e.source}:${(e.message || "").slice(0, 80)}`));
+  const uniqueCount = uniqueKeys.size;
   let badgeBg = "#22c55e";
-  if (errorCount >= 6) badgeBg = "#ef4444";
-  else if (errorCount >= 1) badgeBg = "#f59e0b";
-  const badgeText = errorCount > 99 ? "99+" : String(errorCount);
+  if (uniqueCount >= 6) badgeBg = "#ef4444";
+  else if (uniqueCount >= 1) badgeBg = "#f59e0b";
+  const badgeText = uniqueCount > 99 ? "99+" : String(uniqueCount);
   if (!isOpen) {
     return /* @__PURE__ */ jsxs("div", { "data-bb-panel": true, onClick: () => setIsOpen(true), style: {
       position: "fixed",
@@ -373,7 +495,7 @@ function BlackBoxPanel() {
     zIndex: 99999,
     width: panelWidth,
     maxWidth: "400px",
-    maxHeight: "520px",
+    maxHeight: "min(520px, calc(100vh - 32px))",
     background: "rgba(26, 26, 46, 0.97)",
     borderRadius: "12px",
     boxShadow: "0 4px 24px rgba(0,0,0,0.5)",
@@ -394,12 +516,12 @@ function BlackBoxPanel() {
       /* @__PURE__ */ jsxs("div", { style: { display: "flex", gap: "6px", marginBottom: "6px" }, children: [
         /* @__PURE__ */ jsx("button", { onClick: (e) => {
           e.stopPropagation();
-          copyAsJSON(err);
-        }, style: copyBtnStyle, children: "JSON" }),
+          copyAsJSON(err, keyPrefix);
+        }, style: copyBtnStyle, children: copiedErrorKey === keyPrefix + ":json" ? "\u2713 Copied" : "\u{1F4CB} Copy JSON" }),
         /* @__PURE__ */ jsx("button", { onClick: (e) => {
           e.stopPropagation();
-          copyAsMarkdown(err);
-        }, style: copyBtnStyle, children: "MD" })
+          copyAsMarkdown(err, keyPrefix);
+        }, style: copyBtnStyle, children: copiedErrorKey === keyPrefix + ":md" ? "\u2713 Copied" : "\u{1F4CB} Copy MD" })
       ] }),
       err.stack && /* @__PURE__ */ jsxs("div", { style: { marginBottom: "6px" }, children: [
         /* @__PURE__ */ jsxs(
@@ -464,10 +586,33 @@ function BlackBoxPanel() {
       background: "rgba(0, 0, 0, 0.5)"
     }, onClick: () => setIsExpanded(false) }),
     /* @__PURE__ */ jsxs("div", { "data-bb-panel": true, style: panelStyle, children: [
-      /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.1)", flexShrink: 0 }, children: [
+      /* @__PURE__ */ jsx("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.1)", flexShrink: 0, gap: "8px" }, children: searchOpen ? /* @__PURE__ */ jsxs("div", { style: { flex: 1, display: "flex", alignItems: "center", gap: "6px" }, children: [
+        /* @__PURE__ */ jsx(
+          "input",
+          {
+            ref: (el) => el && el.focus(),
+            type: "text",
+            placeholder: "Search errors...",
+            value: searchQuery,
+            onChange: (e) => setSearchQuery(e.target.value),
+            onKeyDown: (e) => {
+              if (e.key === "Escape") {
+                setSearchOpen(false);
+                setSearchQuery("");
+              }
+            },
+            style: __spreadProps(__spreadValues({}, searchInputStyle), { margin: 0 })
+          }
+        ),
+        /* @__PURE__ */ jsx("span", { onClick: () => {
+          setSearchOpen(false);
+          setSearchQuery("");
+        }, style: { cursor: "pointer", fontSize: "14px", color: "#999", padding: "4px", flexShrink: 0 }, children: "\u2715" })
+      ] }) : /* @__PURE__ */ jsxs(Fragment, { children: [
         /* @__PURE__ */ jsx("span", { style: { fontWeight: "bold", fontSize: "13px", color: "white" }, children: "BlackBox" }),
         /* @__PURE__ */ jsx("span", { style: { fontSize: "10px", color: "#666" }, children: isConnected ? "DB connected" : "Local only" }),
         /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", gap: "2px" }, children: [
+          /* @__PURE__ */ jsx("span", { onClick: () => setSearchOpen(true), title: "Search errors", style: { cursor: "pointer", fontSize: "13px", color: "#999", padding: "4px 8px", borderRadius: "4px", transition: "color 0.15s" }, children: "\u{1F50D}" }),
           /* @__PURE__ */ jsx("span", { onClick: copyFullReport, title: "Copy full diagnostic report as JSON", style: { cursor: "pointer", fontSize: "13px", color: reportCopied ? "#22c55e" : "#999", padding: "4px 8px", borderRadius: "4px", transition: "color 0.15s" }, children: reportCopied ? "\u2713" : "\u{1F4CB}" }),
           /* @__PURE__ */ jsx("span", { onClick: () => setIsExpanded((prev) => !prev), style: { cursor: "pointer", fontSize: "16px", color: "#999", padding: "4px 8px", borderRadius: "4px" }, children: isExpanded ? "\u2921" : "\u2922" }),
           /* @__PURE__ */ jsx("span", { onClick: () => {
@@ -475,7 +620,7 @@ function BlackBoxPanel() {
             setIsExpanded(false);
           }, style: { cursor: "pointer", fontSize: "16px", color: "#999", padding: "4px 8px", marginRight: "-8px", borderRadius: "4px" }, children: "\u2715" })
         ] })
-      ] }),
+      ] }) }),
       /* @__PURE__ */ jsx("div", { style: { display: "flex", borderBottom: "1px solid rgba(255,255,255,0.1)", flexShrink: 0, padding: "0 6px" }, children: ["live", "history", "health"].map((t) => /* @__PURE__ */ jsx(
         "button",
         {
@@ -493,29 +638,20 @@ function BlackBoxPanel() {
       )) }),
       /* @__PURE__ */ jsxs("div", { style: { flex: 1, overflowY: "auto", minHeight: 0 }, children: [
         tab === "live" && /* @__PURE__ */ jsxs("div", { children: [
-          /* @__PURE__ */ jsx("div", { style: { padding: "8px 14px 4px" }, children: /* @__PURE__ */ jsx(
-            "input",
-            {
-              type: "text",
-              placeholder: "Search errors...",
-              value: searchQuery,
-              onChange: (e) => setSearchQuery(e.target.value),
-              style: searchInputStyle
-            }
-          ) }),
           filteredLiveErrors.length === 0 ? /* @__PURE__ */ jsx("div", { style: { padding: "24px 14px", textAlign: "center", color: "#22c55e" }, children: errors.length === 0 ? "No errors captured" : "No matching errors" }) : filteredLiveErrors.map((err, i) => {
-            var _a;
-            const isExp = expandedError === i;
+            var _a, _b;
+            const errKey = `${err.source}:${(err.message || "").slice(0, 60)}:${((_a = err.metadata) == null ? void 0 : _a.timestamp) || i}`;
+            const isExp = expandedError === errKey;
             return /* @__PURE__ */ jsxs("div", { children: [
-              /* @__PURE__ */ jsxs("div", { onClick: () => setExpandedError(isExp ? null : i), style: { padding: "8px 14px", cursor: "pointer", borderBottom: "1px solid rgba(255,255,255,0.05)", background: isExp ? "rgba(255,255,255,0.05)" : "transparent" }, children: [
+              /* @__PURE__ */ jsxs("div", { onClick: () => setExpandedError(isExp ? null : errKey), style: { padding: "8px 14px", cursor: "pointer", borderBottom: "1px solid rgba(255,255,255,0.05)", background: isExp ? "rgba(255,255,255,0.05)" : "transparent" }, children: [
                 /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }, children: [
                   /* @__PURE__ */ jsx("span", { style: { fontSize: "10px", padding: "1px 6px", borderRadius: "3px", background: sourceColor(err.source), color: "white", fontWeight: "bold", textTransform: "uppercase", flexShrink: 0 }, children: err.source || "error" }),
-                  /* @__PURE__ */ jsx("span", { style: { fontSize: "10px", opacity: 0.4, marginLeft: "auto", flexShrink: 0 }, children: timeAgo((_a = err.metadata) == null ? void 0 : _a.timestamp) })
+                  /* @__PURE__ */ jsx("span", { style: { fontSize: "10px", opacity: 0.4, marginLeft: "auto", flexShrink: 0 }, children: timeAgo((_b = err.metadata) == null ? void 0 : _b.timestamp) })
                 ] }),
                 /* @__PURE__ */ jsx("div", { style: { color: "#ccc", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: (err.message || "").slice(0, 80) })
               ] }),
               isExp && renderErrorDetail(err, `live-${i}`)
-            ] }, i);
+            ] }, errKey);
           }),
           hasSilences && /* @__PURE__ */ jsxs("div", { style: { borderTop: "1px solid rgba(255,255,255,0.1)", padding: "8px 14px" }, children: [
             /* @__PURE__ */ jsx("div", { style: { color: "#facc15", fontSize: "11px", fontWeight: "bold", marginBottom: "2px" }, children: "Unresponsive clicks detected" }),
@@ -560,16 +696,6 @@ function BlackBoxPanel() {
               }
             )
           ] }),
-          /* @__PURE__ */ jsx("div", { style: { padding: "8px 14px 4px" }, children: /* @__PURE__ */ jsx(
-            "input",
-            {
-              type: "text",
-              placeholder: "Search saved errors...",
-              value: searchQuery,
-              onChange: (e) => setSearchQuery(e.target.value),
-              style: searchInputStyle
-            }
-          ) }),
           deleteSuccess && /* @__PURE__ */ jsx("div", { style: { padding: "8px 14px", textAlign: "center", color: "#22c55e", fontSize: "11px", background: "rgba(34,197,94,0.1)" }, children: "All saved errors deleted successfully." }),
           filteredHistoryErrors.length === 0 && !timelineLoaded && timeline.length === 0 ? /* @__PURE__ */ jsx("div", { style: { padding: "24px 14px", textAlign: "center", color: "#22c55e" }, children: historyErrors.length === 0 ? "No saved errors" : "No matching errors" }) : /* @__PURE__ */ jsxs(Fragment, { children: [
             filteredHistoryErrors.length > 0 && /* @__PURE__ */ jsxs(Fragment, { children: [
@@ -663,7 +789,7 @@ function BlackBoxPanel() {
         ] }) })
       ] }),
       /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 14px", borderTop: "1px solid rgba(255,255,255,0.1)", flexShrink: 0 }, children: [
-        /* @__PURE__ */ jsx("span", { style: { fontSize: "11px", opacity: 0.6 }, children: tab === "live" ? `${errorCount} error${errorCount !== 1 ? "s" : ""} this session` : tab === "history" ? `${historyErrors.length} saved` : health ? health.verdict : "Health" }),
+        /* @__PURE__ */ jsx("span", { style: { fontSize: "11px", opacity: 0.6 }, children: tab === "live" ? `${uniqueCount} error${uniqueCount !== 1 ? "s" : ""} this session` : tab === "history" ? `${historyErrors.length} saved` : health ? health.verdict : "Health" }),
         /* @__PURE__ */ jsxs("div", { style: { display: "flex", gap: "6px", alignItems: "center" }, children: [
           tab === "live" && (clearSessionFeedback ? /* @__PURE__ */ jsx("span", { style: { fontSize: "11px", color: "#22c55e", padding: "2px 8px" }, children: "Cleared!" }) : /* @__PURE__ */ jsx("span", { onClick: handleClearSession, style: { cursor: "pointer", fontSize: "11px", color: "#999", padding: "2px 8px", borderRadius: "3px", border: "1px solid rgba(255,255,255,0.15)" }, children: "Clear Session" })),
           tab === "history" && isConnected && /* @__PURE__ */ jsx("span", { onClick: () => setShowClearConfirm(true), style: { cursor: "pointer", fontSize: "11px", color: "#ef4444", padding: "2px 8px", borderRadius: "3px", border: "1px solid rgba(239,68,68,0.3)" }, children: "Delete All" })
@@ -676,6 +802,33 @@ function BlackBoxPanel() {
           /* @__PURE__ */ jsx("button", { onClick: () => setShowClearConfirm(false), style: cancelBtn, children: "Cancel" }),
           /* @__PURE__ */ jsx("button", { onClick: handleClearPersisted, disabled: clearing, style: dangerBtn, children: clearing ? "Deleting..." : "Yes, Delete All" })
         ] })
+      ] }),
+      reportText && /* @__PURE__ */ jsxs("div", { style: { position: "absolute", inset: 0, background: "rgba(0,0,0,0.95)", display: "flex", flexDirection: "column", borderRadius: "12px", padding: "12px", gap: "8px", zIndex: 10 }, children: [
+        /* @__PURE__ */ jsxs("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" }, children: [
+          /* @__PURE__ */ jsx("span", { style: { fontSize: "12px", color: "#ccc", fontWeight: "bold" }, children: "Select All + Copy (Ctrl+A, Ctrl+C)" }),
+          /* @__PURE__ */ jsx("span", { onClick: () => setReportText(null), style: { cursor: "pointer", color: "#999", fontSize: "16px", padding: "2px 6px" }, children: "\u2715" })
+        ] }),
+        /* @__PURE__ */ jsx(
+          "textarea",
+          {
+            readOnly: true,
+            value: reportText,
+            onFocus: (e) => e.target.select(),
+            style: {
+              flex: 1,
+              width: "100%",
+              background: "#111",
+              color: "#9fef00",
+              border: "1px solid #333",
+              borderRadius: "6px",
+              padding: "8px",
+              fontSize: "10px",
+              fontFamily: "monospace",
+              resize: "none",
+              outline: "none"
+            }
+          }
+        )
       ] })
     ] })
   ] });

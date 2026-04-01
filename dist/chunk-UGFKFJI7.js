@@ -8,7 +8,7 @@ import {
   getPersistenceConfig,
   initPersistence,
   isCircuitOpen
-} from "./chunk-VVEOEWI2.js";
+} from "./chunk-DTHOA46Q.js";
 
 // src/core/constants.js
 var DEFAULTS = {
@@ -37,6 +37,8 @@ var DEFAULTS = {
     "Warning: ReactDOM.render is no longer supported"
   ],
   sanitize: null,
+  // Error filtering — suppress known errors by message substring
+  errorExcludePatterns: [],
   // Network noise filtering
   networkExcludePatterns: [
     "firestore.googleapis.com",
@@ -177,7 +179,9 @@ function installClickHook(blackbox2) {
       if (href) href = blackbox2._stripQueryParams(href);
       const autoLabel = text.length < 2 && !dataBb ? getLabel(el) : null;
       blackbox2._addBreadcrumb("click", { tag, text, id, className, dataBb, href, autoLabel });
-      const isInteractive = tag === "button" || tag === "input" && el.type === "submit" || ((_g = el.getAttribute) == null ? void 0 : _g.call(el, "role")) === "button";
+      const passiveInputTypes = ["text", "number", "email", "password", "tel", "search", "url", "date", "time", "datetime-local", "month", "week", "color", "range", "file"];
+      const isPassiveInput = tag === "input" && passiveInputTypes.includes(el.type || "text");
+      const isInteractive = tag === "button" || tag === "input" && el.type === "submit" || ((_g = el.getAttribute) == null ? void 0 : _g.call(el, "role")) === "button" || tag === "a" && (!el.href || el.href === "#" || el.href.endsWith("#")) || !!dataBb && !isPassiveInput && tag !== "textarea";
       if (isInteractive) {
         blackbox2._registerSilenceCheck({ tag, text: autoLabel || text, id, dataBb });
       }
@@ -230,8 +234,8 @@ function installNavigationHook(blackbox2) {
 function installConsoleHook(blackbox2) {
   const config = blackbox2._getConfig();
   const ignorePatterns = config.consoleIgnorePatterns || [];
-  const originalError = console.error.bind(console);
-  const originalWarn = console.warn.bind(console);
+  const nativeError = console.error;
+  const nativeWarn = console.warn;
   function interpolateFormatString(args) {
     if (args.length < 2 || typeof args[0] !== "string") return null;
     const fmt = args[0];
@@ -258,143 +262,222 @@ function installConsoleHook(blackbox2) {
     }
     return result.slice(0, config.maxMessageLength);
   }
+  function serializeArg(a) {
+    if (typeof a === "string") return a;
+    if (a && typeof a === "object" && (a instanceof Error || a.code || a.message)) {
+      const parts = [];
+      if (a.message) parts.push(a.message);
+      if (a.code) parts.push(`[code: ${a.code}]`);
+      if (a.path) parts.push(`[path: ${a.path}]`);
+      if (a.stack && !a.message) parts.push(a.stack.split("\n")[0]);
+      return parts.length > 0 ? parts.join(" ") : String(a);
+    }
+    try {
+      return JSON.stringify(a);
+    } catch (e) {
+      return String(a);
+    }
+  }
   function stringifyArgs(args) {
     const interpolated = interpolateFormatString(args);
     if (interpolated !== null) return interpolated;
-    return args.map((a) => {
-      if (typeof a === "string") return a;
-      try {
-        return JSON.stringify(a);
-      } catch (e) {
-        return String(a);
-      }
-    }).join(" ").slice(0, config.maxMessageLength);
+    return args.map(serializeArg).join(" ").slice(0, config.maxMessageLength);
   }
   function matchesIgnorePattern(message) {
     return ignorePatterns.some((pattern) => message.includes(pattern));
   }
-  console.error = function(...args) {
-    originalError(...args);
+  let _recording = false;
+  function bbHandleError(...args) {
+    if (_recording) return;
+    _recording = true;
     try {
       const message = stringifyArgs(args);
       if (message.includes("[BlackBox]")) return;
       if (matchesIgnorePattern(message)) return;
-      const stack = new Error().stack || "";
-      blackbox2._recordError({ message, stack, source: "console.error", context: {} });
+      let stack = new Error().stack || "";
+      const ctx = {};
+      for (const a of args) {
+        if (a && typeof a === "object" && (a instanceof Error || a.code)) {
+          if (a.code) ctx.code = a.code;
+          if (a.path) ctx.path = a.path;
+          if (a.stack) stack = a.stack;
+        }
+      }
+      blackbox2._recordError({ message, stack, source: "console.error", context: ctx });
     } catch (e) {
+    } finally {
+      _recording = false;
     }
-  };
-  console.warn = function(...args) {
-    originalWarn(...args);
+  }
+  function bbHandleWarn(...args) {
+    if (_recording) return;
+    _recording = true;
     try {
       const message = stringifyArgs(args);
       if (message.includes("[BlackBox]")) return;
       if (matchesIgnorePattern(message)) return;
       blackbox2._addBreadcrumb("warning", { message });
     } catch (e) {
+    } finally {
+      _recording = false;
     }
-  };
+  }
+  const SENTINEL = "__bb_hooked";
+  function patchError() {
+    if (console.error[SENTINEL]) return;
+    const thirdPartyWrapper = console.error;
+    const wrapped = function(...args) {
+      thirdPartyWrapper.apply(console, args);
+      bbHandleError(...args);
+    };
+    wrapped[SENTINEL] = true;
+    wrapped.__bb_fn = bbHandleError;
+    console.error = wrapped;
+  }
+  function patchWarn() {
+    if (console.warn[SENTINEL]) return;
+    const thirdPartyWrapper = console.warn;
+    const wrapped = function(...args) {
+      thirdPartyWrapper.apply(console, args);
+      bbHandleWarn(...args);
+    };
+    wrapped[SENTINEL] = true;
+    wrapped.__bb_fn = bbHandleWarn;
+    console.warn = wrapped;
+  }
+  patchError();
+  patchWarn();
+  const repatchInterval = setInterval(() => {
+    patchError();
+    patchWarn();
+  }, 2e3);
   return () => {
-    console.error = originalError;
-    console.warn = originalWarn;
+    clearInterval(repatchInterval);
+    console.error = nativeError;
+    console.warn = nativeWarn;
   };
 }
 
 // src/core/hooks/networkHook.js
 function installNetworkHook(blackbox2) {
   const config = blackbox2._getConfig();
-  const originalFetch = window.fetch.bind(window);
+  const nativeFetch = window.fetch.bind(window);
   const excludePatterns = config.networkExcludePatterns || [];
   function isExcludedUrl(url) {
     return excludePatterns.some((pattern) => url.includes(pattern));
   }
-  window.fetch = async function(input, init = {}) {
-    const method = (init.method || "GET").toUpperCase();
-    let url = "";
-    try {
-      url = typeof input === "string" ? input : (input == null ? void 0 : input.url) || String(input);
-      url = blackbox2._stripQueryParams(url);
-      if (url.length > config.maxUrlLength) url = url.slice(0, config.maxUrlLength);
-    } catch (e) {
-    }
-    if (isExcludedUrl(url)) {
-      return originalFetch(input, init);
-    }
-    const start = Date.now();
-    let response;
-    try {
-      response = await originalFetch(input, init);
-    } catch (err) {
+  let _bbRecording = false;
+  function createFetchWrapper(baseFetch) {
+    const wrapped = async function(input, init = {}) {
+      if (_bbRecording) {
+        return baseFetch(input, init);
+      }
+      const method = (init.method || "GET").toUpperCase();
+      let url = "";
       try {
-        const duration = Date.now() - start;
-        blackbox2._addBreadcrumb("network", { method, url, status: 0, duration, ok: false, error: err.message });
-        blackbox2._recordError({
-          message: `Network error: ${method} ${url} - ${err.message}`,
-          stack: err.stack || "",
-          source: "network",
-          context: { method, url, duration }
-        });
+        url = typeof input === "string" ? input : (input == null ? void 0 : input.url) || String(input);
+        url = blackbox2._stripQueryParams(url);
+        if (url.length > config.maxUrlLength) url = url.slice(0, config.maxUrlLength);
       } catch (e) {
       }
-      throw err;
-    }
-    try {
-      const duration = Date.now() - start;
-      const status = response.status;
-      const ok = response.ok;
-      const crumbData = { method, url, status, duration, ok };
-      if (config.captureRequestBodies && config.maxBodyLength > 0) {
+      if (isExcludedUrl(url)) {
+        return baseFetch(input, init);
+      }
+      _bbRecording = true;
+      const start = Date.now();
+      let response;
+      blackbox2._incrementPendingFetches();
+      try {
+        response = await baseFetch(input, init);
+      } catch (err) {
+        blackbox2._decrementPendingFetches();
+        _bbRecording = false;
         try {
-          if (init.body) {
-            crumbData.requestBody = String(init.body).slice(0, config.maxBodyLength);
-          }
+          const duration = Date.now() - start;
+          const errMsg = err.message || "";
+          const corsBlocked = /cors|blocked|cross.origin|not allowed by access/i.test(errMsg) || err.name === "TypeError" && errMsg === "Failed to fetch";
+          const crumbData = { method, url, status: 0, duration, ok: false, error: errMsg };
+          if (corsBlocked) crumbData.cors_blocked = true;
+          blackbox2._addBreadcrumb("network", crumbData);
+          blackbox2._recordError({
+            message: `Network error: ${method} ${url} - ${errMsg}`,
+            stack: err.stack || "",
+            source: "network",
+            context: __spreadValues({ method, url, duration }, corsBlocked ? { cors_blocked: true } : {})
+          });
         } catch (e) {
         }
+        throw err;
       }
-      if (!ok) {
-        const maxBody = config.maxErrorBodyLength || 1024;
-        const errorContext = { status, method, url, duration };
-        try {
-          if (init.body) {
-            const bodyStr = typeof init.body === "string" ? init.body : init.body instanceof FormData ? [...init.body.keys()].join(", ") : String(init.body);
-            errorContext.requestBody = bodyStr.slice(0, maxBody);
+      try {
+        const duration = Date.now() - start;
+        const status = response.status;
+        const ok = response.ok;
+        const crumbData = { method, url, status, duration, ok };
+        if (config.captureRequestBodies && config.maxBodyLength > 0) {
+          try {
+            if (init.body) {
+              crumbData.requestBody = String(init.body).slice(0, config.maxBodyLength);
+            }
+          } catch (e) {
           }
-        } catch (e) {
         }
-        try {
-          const cloned = response.clone();
-          const text = await cloned.text();
-          if (text) {
-            errorContext.responseBody = text.slice(0, maxBody);
-            crumbData.responseBody = text.slice(0, 200);
+        if (!ok) {
+          const maxBody = config.maxErrorBodyLength || 1024;
+          const errorContext = { status, method, url, duration };
+          try {
+            if (init.body) {
+              const bodyStr = typeof init.body === "string" ? init.body : init.body instanceof FormData ? [...init.body.keys()].join(", ") : String(init.body);
+              errorContext.requestBody = bodyStr.slice(0, maxBody);
+            }
+          } catch (e) {
           }
-        } catch (e) {
+          try {
+            const cloned = response.clone();
+            const text = await cloned.text();
+            if (text) {
+              errorContext.responseBody = text.slice(0, maxBody);
+              crumbData.responseBody = text.slice(0, 200);
+            }
+          } catch (e) {
+          }
+          blackbox2._addBreadcrumb("network", crumbData);
+          blackbox2._recordError({
+            message: `HTTP ${status}: ${method} ${url}`,
+            stack: "",
+            source: "network",
+            context: errorContext
+          });
+        } else {
+          blackbox2._addBreadcrumb("network", crumbData);
         }
-        blackbox2._addBreadcrumb("network", crumbData);
-        blackbox2._recordError({
-          message: `HTTP ${status}: ${method} ${url}`,
-          stack: "",
-          source: "network",
-          context: errorContext
-        });
-      } else {
-        blackbox2._addBreadcrumb("network", crumbData);
+        if (ok && duration > config.slowRequestThreshold) {
+          blackbox2._addBreadcrumb("performance", {
+            action: "slow_request",
+            method,
+            url,
+            duration,
+            threshold: config.slowRequestThreshold
+          });
+        }
+      } catch (e) {
       }
-      if (ok && duration > config.slowRequestThreshold) {
-        blackbox2._addBreadcrumb("performance", {
-          action: "slow_request",
-          method,
-          url,
-          duration,
-          threshold: config.slowRequestThreshold
-        });
-      }
-    } catch (e) {
-    }
-    return response;
-  };
+      blackbox2._decrementPendingFetches();
+      _bbRecording = false;
+      return response;
+    };
+    wrapped.__bb_hooked = true;
+    return wrapped;
+  }
+  function patchFetch() {
+    if (window.fetch.__bb_hooked) return;
+    window.fetch = createFetchWrapper(window.fetch);
+  }
+  patchFetch();
+  const repatchInterval = setInterval(patchFetch, 2e3);
   return () => {
-    window.fetch = originalFetch;
+    clearInterval(repatchInterval);
+    window.fetch = nativeFetch;
   };
 }
 
@@ -443,25 +526,55 @@ function installFormHook(blackbox2) {
 // src/core/hooks/resourceHook.js
 function installResourceHook(blackbox2) {
   const resourceTags = /* @__PURE__ */ new Set(["IMG", "SCRIPT", "LINK", "VIDEO", "AUDIO", "SOURCE"]);
+  const nativeFetch = blackbox2._getNativeFetch();
   const handler = (event) => {
-    var _a;
+    var _a, _b;
     try {
       const target = event.target;
       if (target === window || !target.tagName) return;
       if (!resourceTags.has(target.tagName)) return;
       const tagName = target.tagName.toLowerCase();
       const src = blackbox2._stripQueryParams(target.src || target.href || "");
-      blackbox2._recordError({
-        message: `Resource failed to load: ${tagName} - ${src}`,
-        stack: "",
-        source: "resource_load",
-        context: {
-          tagName,
-          src,
-          id: target.id || null,
-          className: ((_a = target.className) == null ? void 0 : _a.toString()) || ""
+      const context = {
+        tagName,
+        src,
+        id: target.id || null,
+        className: (((_a = target.className) == null ? void 0 : _a.toString()) || "").slice(0, 100)
+      };
+      let el = target;
+      for (let i = 0; i < 5 && el; i++) {
+        if ((_b = el.dataset) == null ? void 0 : _b.bb) {
+          context.dataBb = el.dataset.bb;
+          break;
         }
-      });
+        if (el.id) {
+          context.nearestId = el.id;
+          break;
+        }
+        el = el.parentElement;
+      }
+      if (src && src.startsWith("http") && nativeFetch) {
+        nativeFetch(src, { method: "HEAD", mode: "cors" }).then((res) => {
+          context.httpStatus = res.status;
+          blackbox2._recordError({ message: `Resource failed to load: ${tagName} - ${src}`, stack: "", source: "resource_load", context });
+        }).catch(() => {
+          nativeFetch(src, { method: "HEAD", mode: "no-cors" }).then(() => {
+            context.statusHint = "cors_blocked";
+            blackbox2._recordError({ message: `Resource failed to load: ${tagName} - ${src}`, stack: "", source: "resource_load", context });
+          }).catch(() => {
+            context.httpStatus = 0;
+            context.statusHint = "unreachable";
+            blackbox2._recordError({ message: `Resource failed to load: ${tagName} - ${src}`, stack: "", source: "resource_load", context });
+          });
+        });
+      } else {
+        blackbox2._recordError({
+          message: `Resource failed to load: ${tagName} - ${src}`,
+          stack: "",
+          source: "resource_load",
+          context
+        });
+      }
     } catch (e) {
     }
   };
@@ -548,6 +661,7 @@ function _resetActivityLog() {
 }
 
 // src/core/blackbox.js
+var _nativeFetch = typeof window !== "undefined" ? window.fetch.bind(window) : null;
 var _initialized = false;
 var _config = {};
 var _sessionId = null;
@@ -561,7 +675,13 @@ var _flushTimer = null;
 var _writingError = false;
 var _suspiciousSilences = [];
 var _pendingSilenceChecks = [];
+var _pendingFetchCount = 0;
+var _lastFetchStartTime = 0;
 var _cleanupFns = [];
+var _recentErrors = [];
+var _errorStorms = /* @__PURE__ */ new Map();
+var ERROR_STORM_WINDOW = 5e3;
+var ERROR_STORM_THRESHOLD = 5;
 function _stripQueryParams(url) {
   if (!url || !_config.stripQueryParams) return url;
   try {
@@ -698,7 +818,7 @@ var blackbox = {
     _initialized = true;
     if (_config.db) {
       try {
-        initPersistence(blackbox, _config.db);
+        initPersistence(blackbox, _config.db, _config.firestoreFns);
       } catch (e) {
         console.warn("[BlackBox] Persistence init failed:", e);
       }
@@ -781,15 +901,14 @@ var blackbox = {
   // --- Firestore query methods for the UI panel ---
   async queryPersistedErrors(limit = 50) {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-76GQSQHZ.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-QOVTBEMY.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { errors: [], connected: false };
-      const q = fns.query(
-        ref,
-        fns.where("type", "==", "error"),
-        fns.limit(limit)
-      );
+      const queryConstraints = [fns.where("type", "==", "error")];
+      if (fns.orderBy) queryConstraints.push(fns.orderBy("lastSeen", "desc"));
+      queryConstraints.push(fns.limit(limit));
+      const q = fns.query(ref, ...queryConstraints);
       const snapshot = await fns.getDocs(q);
       const errors = snapshot.docs.map((d) => {
         var _a, _b, _c;
@@ -799,7 +918,6 @@ var blackbox = {
         if ((_c = data.createdAt) == null ? void 0 : _c.toDate) data.createdAt = data.createdAt.toDate().toISOString();
         return __spreadValues({ id: d.id }, data);
       });
-      errors.sort((a, b) => (b.lastSeen || "").localeCompare(a.lastSeen || ""));
       return { errors, connected: true };
     } catch (e) {
       return { errors: [], connected: false, error: e.message };
@@ -807,7 +925,7 @@ var blackbox = {
   },
   async queryHealth() {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-76GQSQHZ.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-QOVTBEMY.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { connected: false };
@@ -845,7 +963,7 @@ var blackbox = {
   },
   async queryTimeline(minutes = 5) {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-76GQSQHZ.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-QOVTBEMY.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { events: [], connected: false };
@@ -874,16 +992,16 @@ var blackbox = {
   },
   async clearPersistedErrors() {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-76GQSQHZ.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-QOVTBEMY.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
-      if (!fns || !ref) return { success: false, error: "Not connected to Firestore" };
-      const snapshot = await fns.getDocs(ref);
+      if (!fns || !ref || !fns.deleteDoc) return { success: false, error: "Not connected to Firestore" };
+      const errorQuery = fns.query(ref, fns.where("type", "==", "error"));
+      const snapshot = await fns.getDocs(errorQuery);
       let deleted = 0;
-      const { deleteDoc } = await import("firebase/firestore");
       for (const doc of snapshot.docs) {
         try {
-          await deleteDoc(doc.ref);
+          await fns.deleteDoc(doc.ref);
           deleted++;
         } catch (e) {
         }
@@ -915,6 +1033,32 @@ var blackbox = {
     if (!_initialized) return;
     try {
       if (message && message.includes("[BlackBox]")) return;
+      const excludes = _config.errorExcludePatterns || [];
+      if (excludes.length > 0 && message) {
+        if (excludes.some((p) => message.includes(p))) return;
+      }
+      const now = Date.now();
+      const norm = (message || "").replace(/^Uncaught\s+\w+:\s*/, "").slice(0, 100);
+      _recentErrors = _recentErrors.filter((r) => now - r.t < 150);
+      if (_recentErrors.some((r) => r.m === norm)) return;
+      _recentErrors.push({ m: norm, t: now });
+      const storm = _errorStorms.get(norm);
+      if (storm && now - storm.firstSeen < ERROR_STORM_WINDOW) {
+        storm.count++;
+        if (storm.count > ERROR_STORM_THRESHOLD) {
+          if (storm.lastEntry) {
+            storm.lastEntry._stormCount = storm.count;
+          }
+          _errorCount++;
+          _notifySubscribers();
+          return;
+        }
+      } else {
+        _errorStorms.set(norm, { count: 1, firstSeen: now, lastEntry: null });
+      }
+      if (message && message.includes("Import trace")) {
+        message = message.split(/\nImport trace/)[0].trim();
+      }
       _writingError = true;
       _errorCount++;
       const truncatedMessage = message ? message.slice(0, _config.maxMessageLength) : "";
@@ -940,6 +1084,8 @@ var blackbox = {
       };
       _errors.push(entry);
       if (_errors.length > 50) _errors.shift();
+      const stormEntry = _errorStorms.get(norm);
+      if (stormEntry) stormEntry.lastEntry = entry;
       blackbox._addBreadcrumb("error", { message: truncatedMessage, source });
       if (_onErrorCallback) {
         try {
@@ -957,16 +1103,35 @@ var blackbox = {
     return __spreadValues({}, _config);
   },
   _onError(callback) {
-    _onErrorCallback = callback;
+    const prev = _onErrorCallback;
+    _onErrorCallback = prev ? (entry) => {
+      prev(entry);
+      callback(entry);
+    } : callback;
   },
   _onActivityFlush(callback) {
-    _onActivityFlushCallback = callback;
+    const prev = _onActivityFlushCallback;
+    _onActivityFlushCallback = prev ? (data) => {
+      prev(data);
+      callback(data);
+    } : callback;
   },
   _stripQueryParams(url) {
     return _stripQueryParams(url);
   },
+  _getNativeFetch() {
+    return _nativeFetch;
+  },
   _getCurrentPath() {
     return _getCurrentPath();
+  },
+  // Pending fetch tracking (used by silence detector)
+  _incrementPendingFetches() {
+    _pendingFetchCount++;
+    _lastFetchStartTime = Date.now();
+  },
+  _decrementPendingFetches() {
+    _pendingFetchCount = Math.max(0, _pendingFetchCount - 1);
   },
   // Suspicious silence support
   _registerSilenceCheck(clickDetails) {
@@ -975,11 +1140,14 @@ var blackbox = {
     const checkId = setTimeout(() => {
       try {
         const crumbs = _breadcrumbs ? _breadcrumbs.snapshot() : [];
-        const meaningfulTypes = ["network", "navigation", "warning", "error", "custom"];
+        const meaningfulTypes = ["network", "navigation", "warning", "error", "custom", "form"];
         const hasFollowup = crumbs.some((c) => {
           if (!meaningfulTypes.includes(c.type)) return false;
           return new Date(c.timestamp).getTime() > clickTime;
         });
+        if (!hasFollowup && _pendingFetchCount > 0 && _lastFetchStartTime > clickTime) {
+          return;
+        }
         if (!hasFollowup) {
           const silence = {
             type: "suspicious_silence",
@@ -993,6 +1161,8 @@ var blackbox = {
         }
       } catch (e) {
       }
+      const idx = _pendingSilenceChecks.indexOf(checkId);
+      if (idx !== -1) _pendingSilenceChecks.splice(idx, 1);
     }, _config.silenceDetectionDelay);
     _pendingSilenceChecks.push(checkId);
   },
@@ -1008,6 +1178,10 @@ var blackbox = {
     _onErrorCallback = null;
     _onActivityFlushCallback = null;
     _suspiciousSilences = [];
+    _pendingFetchCount = 0;
+    _lastFetchStartTime = 0;
+    _recentErrors = [];
+    _errorStorms = /* @__PURE__ */ new Map();
     for (const id of _pendingSilenceChecks) clearTimeout(id);
     _pendingSilenceChecks = [];
     if (_flushTimer) clearInterval(_flushTimer);

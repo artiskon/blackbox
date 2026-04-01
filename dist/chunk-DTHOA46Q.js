@@ -34,6 +34,7 @@ var __objRest = (source, exclude) => {
 // src/core/fingerprint.js
 var UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 var NUMERIC_ID_RE = /\/\d+(?=\/|$)/g;
+var HASH_SEGMENT_RE = /\/[a-zA-Z0-9]{15,}(?=\/|$)/g;
 var SKIP_FRAMES_RE = /node_modules|webpack|blackbox|__webpack|hot-update|\(native\)|<anonymous>/i;
 function stripQueryParams(path) {
   if (!path) return "";
@@ -53,7 +54,24 @@ function normalizePath(path) {
   let normalized = stripQueryParams(path || "");
   normalized = normalized.replace(UUID_RE, ":id");
   normalized = normalized.replace(NUMERIC_ID_RE, "/:num");
+  normalized = normalized.replace(HASH_SEGMENT_RE, "/:hash");
   return normalized;
+}
+function normalizeMessageUrls(message) {
+  if (!message) return message;
+  return message.replace(/https?:\/\/[^\s"']+/g, (url) => {
+    try {
+      const u = new URL(url);
+      let path = u.pathname;
+      path = path.replace(UUID_RE, ":id");
+      path = path.replace(NUMERIC_ID_RE, "/:num");
+      path = path.replace(HASH_SEGMENT_RE, "/:hash");
+      path = path.replace(/\/[^/]+\.[a-z]{2,5}$/i, "/*");
+      return u.hostname + path;
+    } catch (e) {
+      return url;
+    }
+  });
 }
 function extractTopAppFrame(stack) {
   if (!stack) return "";
@@ -89,7 +107,7 @@ function hashString(str) {
   return result;
 }
 function generateFingerprint(message, source, path, stack) {
-  const truncatedMessage = (message || "").slice(0, 100);
+  const truncatedMessage = normalizeMessageUrls((message || "").slice(0, 100));
   const normalizedPath = normalizePath(path);
   const topFrame = extractTopAppFrame(stack);
   const input = `${truncatedMessage}|${source || ""}|${normalizedPath}|${topFrame}`;
@@ -117,6 +135,9 @@ var _writeQueue = [];
 var _processing = false;
 var _fingerprintCache = /* @__PURE__ */ new Map();
 var _firstWriteLogged = false;
+var _stormTracker = /* @__PURE__ */ new Map();
+var STORM_WINDOW_MS = 5e3;
+var STORM_THRESHOLD = 5;
 var _firestoreFns = null;
 async function getFirestoreFns() {
   if (_firestoreFns) return _firestoreFns;
@@ -126,8 +147,10 @@ async function getFirestoreFns() {
       collection: mod.collection,
       addDoc: mod.addDoc,
       updateDoc: mod.updateDoc,
+      deleteDoc: mod.deleteDoc,
       query: mod.query,
       where: mod.where,
+      orderBy: mod.orderBy,
       limit: mod.limit,
       getDocs: mod.getDocs,
       serverTimestamp: mod.serverTimestamp,
@@ -157,8 +180,9 @@ function trimDocument(doc, maxBytes) {
   }
   if (trimmed.context && typeof trimmed.context === "object") {
     const ctx = {};
+    const preserveKeys = ["componentStack"];
     for (const [k, v] of Object.entries(trimmed.context)) {
-      if (typeof v === "string" && v.length > 200) {
+      if (typeof v === "string" && v.length > 200 && !preserveKeys.includes(k)) {
         ctx[k] = v.slice(0, 200);
       } else {
         ctx[k] = v;
@@ -195,6 +219,35 @@ function isSafeEnvironment(config) {
 function persistError(errorEntry) {
   if (_circuitOpen) return;
   if (_writingError) return;
+  const { fingerprint } = generateFingerprint(
+    errorEntry.message,
+    errorEntry.source,
+    errorEntry.path,
+    errorEntry.stack
+  );
+  const now = Date.now();
+  const storm = _stormTracker.get(fingerprint);
+  if (storm) {
+    if (now - storm.firstSeen < STORM_WINDOW_MS) {
+      storm.count++;
+      storm.lastSeen = now;
+      if (storm.count === STORM_THRESHOLD) {
+        errorEntry._storm = { count: storm.count, windowMs: now - storm.firstSeen };
+      }
+      if (storm.count > STORM_THRESHOLD) {
+        return;
+      }
+    } else {
+      _stormTracker.set(fingerprint, { count: 1, firstSeen: now, lastSeen: now });
+    }
+  } else {
+    _stormTracker.set(fingerprint, { count: 1, firstSeen: now, lastSeen: now });
+  }
+  if (_stormTracker.size > 100) {
+    for (const [fp, s] of _stormTracker) {
+      if (now - s.lastSeen > STORM_WINDOW_MS * 2) _stormTracker.delete(fp);
+    }
+  }
   _writeQueue.push(errorEntry);
   if (!_processing) {
     _processQueue();
@@ -217,6 +270,9 @@ async function _doWrite(errorEntry) {
   _writingError = true;
   try {
     const fns = await getFirestoreFns();
+    if (!_collectionRef && fns && _db) {
+      _collectionRef = fns.collection(_db, _config.collectionName);
+    }
     if (!fns || !_collectionRef) return;
     const { fingerprint, groupingInputs } = generateFingerprint(
       errorEntry.message,
@@ -228,11 +284,17 @@ async function _doWrite(errorEntry) {
     if (cachedRef) {
       try {
         const currentData = (_a = (await fns.getDocs(fns.query(_collectionRef, fns.where("fingerprint", "==", fingerprint), fns.limit(1)))).docs[0]) == null ? void 0 : _a.data();
-        await fns.updateDoc(cachedRef, {
-          occurrences: ((currentData == null ? void 0 : currentData.occurrences) || 1) + 1,
+        const stormCount = errorEntry._storm ? errorEntry._storm.count : 1;
+        const updateData = {
+          occurrences: ((currentData == null ? void 0 : currentData.occurrences) || 1) + stormCount,
           lastSeen: fns.serverTimestamp(),
+          lastSeenSessionId: errorEntry.sessionId,
           breadcrumbs: errorEntry.breadcrumbs || []
-        });
+        };
+        if (errorEntry._storm) {
+          updateData.storm = { count: errorEntry._storm.count, windowMs: errorEntry._storm.windowMs };
+        }
+        await fns.updateDoc(cachedRef, updateData);
         _failureCount = 0;
         return;
       } catch (e) {
@@ -256,11 +318,17 @@ async function _doWrite(errorEntry) {
     if (existingDoc) {
       try {
         const currentData = existingDoc.data();
-        await fns.updateDoc(existingDoc.ref, {
-          occurrences: (currentData.occurrences || 1) + 1,
+        const stormCount = errorEntry._storm ? errorEntry._storm.count : 1;
+        const updateData = {
+          occurrences: (currentData.occurrences || 1) + stormCount,
           lastSeen: fns.serverTimestamp(),
+          lastSeenSessionId: errorEntry.sessionId,
           breadcrumbs: errorEntry.breadcrumbs || []
-        });
+        };
+        if (errorEntry._storm) {
+          updateData.storm = { count: errorEntry._storm.count, windowMs: errorEntry._storm.windowMs };
+        }
+        await fns.updateDoc(existingDoc.ref, updateData);
         _fingerprintCache.set(fingerprint, existingDoc.ref);
         _failureCount = 0;
         return;
@@ -269,11 +337,12 @@ async function _doWrite(errorEntry) {
         return;
       }
     }
-    let doc = {
+    let doc = __spreadValues({
       schemaVersion: _config.schemaVersion,
       fingerprint,
       groupingInputs,
       sessionId: errorEntry.sessionId,
+      lastSeenSessionId: errorEntry.sessionId,
       type: "error",
       message: errorEntry.message,
       stack: errorEntry.stack || "",
@@ -283,11 +352,11 @@ async function _doWrite(errorEntry) {
       breadcrumbs: errorEntry.breadcrumbs || [],
       context: errorEntry.context || {},
       metadata: errorEntry.metadata || {},
-      occurrences: 1,
+      occurrences: errorEntry._storm ? errorEntry._storm.count : 1,
       firstSeen: fns.serverTimestamp(),
       lastSeen: fns.serverTimestamp(),
       createdAt: fns.serverTimestamp()
-    };
+    }, errorEntry._storm ? { storm: { count: errorEntry._storm.count, windowMs: errorEntry._storm.windowMs } } : {});
     doc = trimDocument(doc, _config.maxDocumentBytes);
     try {
       const docRef = await fns.addDoc(_collectionRef, doc);
@@ -315,7 +384,7 @@ function handleWriteFailure(e) {
     console.warn(`[BlackBox] Firestore writes disabled after ${_config.maxWriteFailures} failures. Running in memory-only mode.`);
   }
 }
-function initPersistence(blackbox, db) {
+function initPersistence(blackbox, db, externalFns) {
   try {
     _blackbox = blackbox;
     _db = db;
@@ -323,6 +392,9 @@ function initPersistence(blackbox, db) {
     _failureCount = 0;
     _circuitOpen = false;
     _writingError = false;
+    if (externalFns) {
+      _firestoreFns = externalFns;
+    }
     if (!isSafeEnvironment(_config)) {
       try {
         if (typeof process !== "undefined" && process.env && process.env.NODE_ENV === "production") {
@@ -374,6 +446,7 @@ function _resetPersistence() {
   _processing = false;
   _fingerprintCache = /* @__PURE__ */ new Map();
   _firstWriteLogged = false;
+  _stormTracker = /* @__PURE__ */ new Map();
 }
 function _setFirestoreFns(fns) {
   _firestoreFns = fns;

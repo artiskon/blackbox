@@ -11,6 +11,9 @@ let _writeQueue = [];
 let _processing = false;
 let _fingerprintCache = new Map();
 let _firstWriteLogged = false; // fingerprint → docRef (avoids Firestore eventual consistency race)
+let _stormTracker = new Map(); // fingerprint → { count, firstSeen, lastSeen }
+const STORM_WINDOW_MS = 5000; // 5-second window for detecting error storms
+const STORM_THRESHOLD = 5;    // 5+ occurrences in window = storm
 
 // Firestore SDK functions — resolved dynamically
 let _firestoreFns = null;
@@ -59,11 +62,12 @@ function trimDocument(doc, maxBytes) {
     if (size <= maxBytes) return trimmed;
   }
 
-  // Step 2: truncate context values to 200 chars
+  // Step 2: truncate context values to 200 chars (preserve componentStack for React diagnostics)
   if (trimmed.context && typeof trimmed.context === 'object') {
     const ctx = {};
+    const preserveKeys = ['componentStack'];
     for (const [k, v] of Object.entries(trimmed.context)) {
-      if (typeof v === 'string' && v.length > 200) {
+      if (typeof v === 'string' && v.length > 200 && !preserveKeys.includes(k)) {
         ctx[k] = v.slice(0, 200);
       } else {
         ctx[k] = v;
@@ -113,6 +117,46 @@ function persistError(errorEntry) {
   if (_circuitOpen) return;
   if (_writingError) return;
 
+  // Error storm detection: collapse rapid-fire identical errors
+  const { fingerprint } = generateFingerprint(
+    errorEntry.message,
+    errorEntry.source,
+    errorEntry.path,
+    errorEntry.stack
+  );
+
+  const now = Date.now();
+  const storm = _stormTracker.get(fingerprint);
+
+  if (storm) {
+    if (now - storm.firstSeen < STORM_WINDOW_MS) {
+      // Within storm window — increment count, skip the write
+      storm.count++;
+      storm.lastSeen = now;
+      if (storm.count === STORM_THRESHOLD) {
+        // Mark the entry as a storm so the single write reflects it
+        errorEntry._storm = { count: storm.count, windowMs: now - storm.firstSeen };
+      }
+      if (storm.count > STORM_THRESHOLD) {
+        // Already wrote the storm entry — just keep counting, don't persist
+        return;
+      }
+      // Below threshold — let it through normally
+    } else {
+      // Window expired — reset tracker for this fingerprint
+      _stormTracker.set(fingerprint, { count: 1, firstSeen: now, lastSeen: now });
+    }
+  } else {
+    _stormTracker.set(fingerprint, { count: 1, firstSeen: now, lastSeen: now });
+  }
+
+  // Prune old storm entries every 50 writes
+  if (_stormTracker.size > 100) {
+    for (const [fp, s] of _stormTracker) {
+      if (now - s.lastSeen > STORM_WINDOW_MS * 2) _stormTracker.delete(fp);
+    }
+  }
+
   _writeQueue.push(errorEntry);
   if (!_processing) {
     _processQueue();
@@ -151,12 +195,17 @@ async function _doWrite(errorEntry) {
     if (cachedRef) {
       try {
         const currentData = (await fns.getDocs(fns.query(_collectionRef, fns.where('fingerprint', '==', fingerprint), fns.limit(1)))).docs[0]?.data();
-        await fns.updateDoc(cachedRef, {
-          occurrences: (currentData?.occurrences || 1) + 1,
+        const stormCount = errorEntry._storm ? errorEntry._storm.count : 1;
+        const updateData = {
+          occurrences: (currentData?.occurrences || 1) + stormCount,
           lastSeen: fns.serverTimestamp(),
           lastSeenSessionId: errorEntry.sessionId,
           breadcrumbs: errorEntry.breadcrumbs || []
-        });
+        };
+        if (errorEntry._storm) {
+          updateData.storm = { count: errorEntry._storm.count, windowMs: errorEntry._storm.windowMs };
+        }
+        await fns.updateDoc(cachedRef, updateData);
         _failureCount = 0;
         return;
       } catch {
@@ -184,12 +233,17 @@ async function _doWrite(errorEntry) {
     if (existingDoc) {
       try {
         const currentData = existingDoc.data();
-        await fns.updateDoc(existingDoc.ref, {
-          occurrences: (currentData.occurrences || 1) + 1,
+        const stormCount = errorEntry._storm ? errorEntry._storm.count : 1;
+        const updateData = {
+          occurrences: (currentData.occurrences || 1) + stormCount,
           lastSeen: fns.serverTimestamp(),
           lastSeenSessionId: errorEntry.sessionId,
           breadcrumbs: errorEntry.breadcrumbs || []
-        });
+        };
+        if (errorEntry._storm) {
+          updateData.storm = { count: errorEntry._storm.count, windowMs: errorEntry._storm.windowMs };
+        }
+        await fns.updateDoc(existingDoc.ref, updateData);
         _fingerprintCache.set(fingerprint, existingDoc.ref);
         _failureCount = 0;
         return;
@@ -215,10 +269,11 @@ async function _doWrite(errorEntry) {
       breadcrumbs: errorEntry.breadcrumbs || [],
       context: errorEntry.context || {},
       metadata: errorEntry.metadata || {},
-      occurrences: 1,
+      occurrences: errorEntry._storm ? errorEntry._storm.count : 1,
       firstSeen: fns.serverTimestamp(),
       lastSeen: fns.serverTimestamp(),
-      createdAt: fns.serverTimestamp()
+      createdAt: fns.serverTimestamp(),
+      ...(errorEntry._storm ? { storm: { count: errorEntry._storm.count, windowMs: errorEntry._storm.windowMs } } : {})
     };
 
     doc = trimDocument(doc, _config.maxDocumentBytes);
@@ -326,6 +381,7 @@ export function _resetPersistence() {
   _processing = false;
   _fingerprintCache = new Map();
   _firstWriteLogged = false;
+  _stormTracker = new Map();
 }
 
 export function _setFirestoreFns(fns) {

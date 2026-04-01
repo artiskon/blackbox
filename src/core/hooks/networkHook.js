@@ -43,12 +43,21 @@ export function installNetworkHook(blackbox) {
         _bbRecording = false;
         try {
           const duration = Date.now() - start;
-          blackbox._addBreadcrumb('network', { method, url, status: 0, duration, ok: false, error: err.message });
+          const errMsg = err.message || '';
+
+          // Detect CORS blocks — browsers surface this in the TypeError message
+          const corsBlocked = /cors|blocked|cross.origin|not allowed by access/i.test(errMsg)
+            || (err.name === 'TypeError' && errMsg === 'Failed to fetch');
+
+          const crumbData = { method, url, status: 0, duration, ok: false, error: errMsg };
+          if (corsBlocked) crumbData.cors_blocked = true;
+
+          blackbox._addBreadcrumb('network', crumbData);
           blackbox._recordError({
-            message: `Network error: ${method} ${url} - ${err.message}`,
+            message: `Network error: ${method} ${url} - ${errMsg}`,
             stack: err.stack || '',
             source: 'network',
-            context: { method, url, duration }
+            context: { method, url, duration, ...(corsBlocked ? { cors_blocked: true } : {}) }
           });
         } catch { /* ignore */ }
         throw err;

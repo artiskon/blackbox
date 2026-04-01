@@ -31,6 +31,9 @@ let _pendingFetchCount = 0;
 let _lastFetchStartTime = 0;
 let _cleanupFns = [];
 let _recentErrors = []; // dedup window: [{norm, time}]
+let _errorStorms = new Map(); // norm → { count, firstSeen, lastEntry }
+const ERROR_STORM_WINDOW = 5000;
+const ERROR_STORM_THRESHOLD = 5;
 
 function _stripQueryParams(url) {
   if (!url || !_config.stripQueryParams) return url;
@@ -441,6 +444,23 @@ const blackbox = {
       if (_recentErrors.some(r => r.m === norm)) return;
       _recentErrors.push({ m: norm, t: now });
 
+      // Error storm detection: collapse rapid-fire identical errors in-memory
+      const storm = _errorStorms.get(norm);
+      if (storm && (now - storm.firstSeen) < ERROR_STORM_WINDOW) {
+        storm.count++;
+        if (storm.count > ERROR_STORM_THRESHOLD) {
+          // Update the existing entry's storm count instead of adding a new one
+          if (storm.lastEntry) {
+            storm.lastEntry._stormCount = storm.count;
+          }
+          _errorCount++;
+          _notifySubscribers();
+          return;
+        }
+      } else {
+        _errorStorms.set(norm, { count: 1, firstSeen: now, lastEntry: null });
+      }
+
       // Strip webpack/Next.js noise from messages
       if (message && message.includes('Import trace')) {
         message = message.split(/\nImport trace/)[0].trim();
@@ -476,6 +496,10 @@ const blackbox = {
 
       _errors.push(entry);
       if (_errors.length > 50) _errors.shift();
+
+      // Link storm tracker to this entry so future hits update it
+      const stormEntry = _errorStorms.get(norm);
+      if (stormEntry) stormEntry.lastEntry = entry;
 
       blackbox._addBreadcrumb('error', { message: truncatedMessage, source });
 
@@ -572,6 +596,7 @@ const blackbox = {
     _pendingFetchCount = 0;
     _lastFetchStartTime = 0;
     _recentErrors = [];
+    _errorStorms = new Map();
     for (const id of _pendingSilenceChecks) clearTimeout(id);
     _pendingSilenceChecks = [];
     if (_flushTimer) clearInterval(_flushTimer);

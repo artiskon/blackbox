@@ -1,24 +1,42 @@
 'use client';
 import {
   blackbox_default
-} from "./chunk-FL5V6FN3.js";
+} from "./chunk-UGFKFJI7.js";
 
 // src/core/hooks/firebaseHook.js
-async function bbFirestoreOp(operationName, promise) {
+async function bbFirestoreOp(operationName, promise, details = {}) {
   try {
     const result = await promise;
     try {
-      blackbox_default._addBreadcrumb("firebase", { action: operationName, status: "success" });
+      blackbox_default._addBreadcrumb("firebase", {
+        action: operationName,
+        status: "success",
+        path: details.path || null
+      });
     } catch (e) {
     }
     return result;
   } catch (error) {
     try {
+      const ctx = {
+        code: error.code,
+        operation: operationName
+      };
+      if (details.path) ctx.documentPath = details.path;
+      if (error.code === "invalid-argument" && details.data) {
+        try {
+          const keys = Object.keys(details.data);
+          const undefinedKeys = keys.filter((k) => details.data[k] === void 0);
+          ctx.writeFields = keys.slice(0, 20);
+          if (undefinedKeys.length > 0) ctx.undefinedFields = undefinedKeys;
+        } catch (e) {
+        }
+      }
       blackbox_default._recordError({
-        message: error.message || String(error),
+        message: `Firestore ${operationName} failed: ${error.message || error.code}`,
         stack: error.stack || "",
         source: "firebase",
-        context: { code: error.code, message: error.message, operation: operationName }
+        context: ctx
       });
     } catch (e) {
     }
@@ -51,11 +69,11 @@ async function bbTrackAuth(auth) {
     console.warn("[BlackBox] bbTrackAuth failed:", e);
   }
 }
-async function bbOnSnapshot(query, onNext, onError) {
+async function bbOnSnapshot(queryRef, onNext, onError) {
   try {
     const { onSnapshot } = await import("firebase/firestore");
     return onSnapshot(
-      query,
+      queryRef,
       (snapshot) => {
         var _a;
         try {
@@ -74,10 +92,10 @@ async function bbOnSnapshot(query, onNext, onError) {
       (error) => {
         try {
           blackbox_default._recordError({
-            message: error.message || String(error),
+            message: `Firestore listener error: ${error.message || error.code}`,
             stack: error.stack || "",
             source: "firebase_listener",
-            context: { code: error.code }
+            context: { code: error.code, message: error.message }
           });
         } catch (e) {
         }

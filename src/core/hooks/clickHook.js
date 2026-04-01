@@ -52,9 +52,14 @@ export function installClickHook(blackbox) {
       blackbox._addBreadcrumb('click', { tag, text, id, className, dataBb, href, autoLabel });
 
       // Suspicious silence check for interactive elements
+      // Broad coverage: any clickable element that might trigger an action
+      const passiveInputTypes = ['text', 'number', 'email', 'password', 'tel', 'search', 'url', 'date', 'time', 'datetime-local', 'month', 'week', 'color', 'range', 'file'];
+      const isPassiveInput = tag === 'input' && passiveInputTypes.includes(el.type || 'text');
       const isInteractive = tag === 'button'
         || (tag === 'input' && el.type === 'submit')
-        || el.getAttribute?.('role') === 'button';
+        || el.getAttribute?.('role') === 'button'
+        || (tag === 'a' && (!el.href || el.href === '#' || el.href.endsWith('#')))
+        || (!!dataBb && !isPassiveInput && tag !== 'textarea');
 
       if (isInteractive) {
         blackbox._registerSilenceCheck({ tag, text: autoLabel || text, id, dataBb });
