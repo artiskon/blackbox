@@ -141,6 +141,7 @@ function BlackBoxPanel() {
   const [activeFilters, setActiveFilters] = useState(new Set(BREADCRUMB_FILTER_TYPES));
   const [reportCopied, setReportCopied] = useState(false);
   const [reportText, setReportText] = useState(null);
+  const [copiedErrorKey, setCopiedErrorKey] = useState(null);
 
   const isConnected = blackbox.isConnectedToFirestore();
 
@@ -299,23 +300,7 @@ function BlackBoxPanel() {
       });
     }
     const text = JSON.stringify(report, null, 2);
-    let copied = false;
-    try {
-      await navigator.clipboard.writeText(text);
-      copied = true;
-    } catch { /* clipboard API blocked (iframe / permissions policy) */ }
-    if (!copied) {
-      try {
-        const ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.cssText = 'position:fixed;left:-9999px';
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        document.body.removeChild(ta);
-        copied = true;
-      } catch { /* fallback also failed */ }
-    }
+    const copied = await copyToClipboard(text);
     if (copied) {
       setReportCopied(true);
       setTimeout(() => setReportCopied(false), 2000);
@@ -380,16 +365,18 @@ function BlackBoxPanel() {
 
   async function handleClearPersisted() {
     setClearing(true);
-    await blackbox.clearPersistedErrors();
+    const result = await blackbox.clearPersistedErrors();
     setClearing(false);
     setShowClearConfirm(false);
-    setHistoryErrors([]);
-    setHistoryLoaded(false);
-    setHealth(null);
-    setTimeline([]);
-    setTimelineLoaded(false);
-    setDeleteSuccess(true);
-    setTimeout(() => setDeleteSuccess(false), 3000);
+    if (result.success) {
+      setHistoryErrors([]);
+      setHistoryLoaded(false);
+      setHealth(null);
+      setTimeline([]);
+      setTimelineLoaded(false);
+      setDeleteSuccess(true);
+      setTimeout(() => setDeleteSuccess(false), 3000);
+    }
   }
 
   function toggleStack(key) {
@@ -419,12 +406,43 @@ function BlackBoxPanel() {
     return msg.includes(q) || src.includes(q) || path.includes(q);
   }
 
-  async function copyAsJSON(err) {
-    try { await navigator.clipboard.writeText(errorToJSON(err)); } catch (e) { /* silent */ }
+  function copyToClipboard(text) {
+    // Try modern API first, fall back to execCommand for iframes
+    if (navigator.clipboard?.writeText) {
+      return navigator.clipboard.writeText(text).then(() => true).catch(() => fallbackCopy(text));
+    }
+    return Promise.resolve(fallbackCopy(text));
   }
 
-  async function copyAsMarkdown(err) {
-    try { await navigator.clipboard.writeText(errorToMarkdown(err)); } catch (e) { /* silent */ }
+  function fallbackCopy(text) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;left:-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function copyAsJSON(err, key) {
+    const ok = await copyToClipboard(errorToJSON(err));
+    if (ok) {
+      setCopiedErrorKey(key + ':json');
+      setTimeout(() => setCopiedErrorKey(null), 1500);
+    }
+  }
+
+  async function copyAsMarkdown(err, key) {
+    const ok = await copyToClipboard(errorToMarkdown(err));
+    if (ok) {
+      setCopiedErrorKey(key + ':md');
+      setTimeout(() => setCopiedErrorKey(null), 1500);
+    }
   }
 
   const hasSilences = silences.length > 0;
@@ -470,7 +488,7 @@ function BlackBoxPanel() {
       }
     : {
         position: 'fixed', bottom: '16px', right: '8px', zIndex: 99999,
-        width: panelWidth, maxWidth: '400px', maxHeight: '520px',
+        width: panelWidth, maxWidth: '400px', maxHeight: 'min(520px, calc(100vh - 32px))',
         background: 'rgba(26, 26, 46, 0.97)', borderRadius: '12px',
         boxShadow: '0 4px 24px rgba(0,0,0,0.5)', color: '#e0e0e0',
         fontFamily: 'ui-monospace, "Cascadia Code", "Fira Code", monospace',
@@ -489,8 +507,8 @@ function BlackBoxPanel() {
       <div style={{ padding: '6px 14px 10px 24px', background: 'rgba(0,0,0,0.2)', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
         {/* Copy buttons */}
         <div style={{ display: 'flex', gap: '6px', marginBottom: '6px' }}>
-          <button onClick={(e) => { e.stopPropagation(); copyAsJSON(err); }} style={copyBtnStyle}>JSON</button>
-          <button onClick={(e) => { e.stopPropagation(); copyAsMarkdown(err); }} style={copyBtnStyle}>MD</button>
+          <button onClick={(e) => { e.stopPropagation(); copyAsJSON(err, keyPrefix); }} style={copyBtnStyle}>{copiedErrorKey === keyPrefix + ':json' ? '✓ Copied' : '📋 Copy JSON'}</button>
+          <button onClick={(e) => { e.stopPropagation(); copyAsMarkdown(err, keyPrefix); }} style={copyBtnStyle}>{copiedErrorKey === keyPrefix + ':md' ? '✓ Copied' : '📋 Copy MD'}</button>
         </div>
 
         {/* Collapsible stack trace */}
@@ -815,7 +833,7 @@ function BlackBoxPanel() {
         {/* Footer */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 14px', borderTop: '1px solid rgba(255,255,255,0.1)', flexShrink: 0 }}>
           <span style={{ fontSize: '11px', opacity: 0.6 }}>
-            {tab === 'live' ? `${errorCount} error${errorCount !== 1 ? 's' : ''} this session` : tab === 'history' ? `${historyErrors.length} saved` : health ? health.verdict : 'Health'}
+            {tab === 'live' ? `${uniqueCount} error${uniqueCount !== 1 ? 's' : ''} this session` : tab === 'history' ? `${historyErrors.length} saved` : health ? health.verdict : 'Health'}
           </span>
           <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
             {/* M4: Clear session with feedback */}

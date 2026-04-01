@@ -30,6 +30,7 @@ let _pendingSilenceChecks = [];
 let _pendingFetchCount = 0;
 let _lastFetchStartTime = 0;
 let _cleanupFns = [];
+let _recentErrors = []; // dedup window: [{norm, time}]
 
 function _stripQueryParams(url) {
   if (!url || !_config.stripQueryParams) return url;
@@ -278,10 +279,10 @@ const blackbox = {
       const ref = getCollectionRef();
       if (!fns || !ref) return { errors: [], connected: false };
 
-      const q = fns.query(ref,
-        fns.where('type', '==', 'error'),
-        fns.limit(limit)
-      );
+      const queryConstraints = [fns.where('type', '==', 'error')];
+      if (fns.orderBy) queryConstraints.push(fns.orderBy('lastSeen', 'desc'));
+      queryConstraints.push(fns.limit(limit));
+      const q = fns.query(ref, ...queryConstraints);
       const snapshot = await fns.getDocs(q);
       const errors = snapshot.docs.map(d => {
         const data = d.data();
@@ -290,7 +291,6 @@ const blackbox = {
         if (data.createdAt?.toDate) data.createdAt = data.createdAt.toDate().toISOString();
         return { id: d.id, ...data };
       });
-      errors.sort((a, b) => (b.lastSeen || '').localeCompare(a.lastSeen || ''));
       return { errors, connected: true };
     } catch (e) {
       return { errors: [], connected: false, error: e.message };
@@ -433,6 +433,14 @@ const blackbox = {
         if (excludes.some(p => message.includes(p))) return;
       }
 
+      // Dedup: skip if same error recorded within 150ms
+      // (prevents double-count from window.onerror + React's console.error re-throw)
+      const now = Date.now();
+      const norm = (message || '').replace(/^Uncaught\s+\w+:\s*/, '').slice(0, 100);
+      _recentErrors = _recentErrors.filter(r => now - r.t < 150);
+      if (_recentErrors.some(r => r.m === norm)) return;
+      _recentErrors.push({ m: norm, t: now });
+
       // Strip webpack/Next.js noise from messages
       if (message && message.includes('Import trace')) {
         message = message.split(/\nImport trace/)[0].trim();
@@ -563,6 +571,7 @@ const blackbox = {
     _suspiciousSilences = [];
     _pendingFetchCount = 0;
     _lastFetchStartTime = 0;
+    _recentErrors = [];
     for (const id of _pendingSilenceChecks) clearTimeout(id);
     _pendingSilenceChecks = [];
     if (_flushTimer) clearInterval(_flushTimer);
