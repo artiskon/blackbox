@@ -9,6 +9,16 @@ const HASH_SEGMENT_RE = /\/[a-zA-Z0-9]{15,}(?=\/|$)/g; // long hash-like path se
 const FILE_WITH_HASH_RE = /\/[^/]*_[a-f0-9]{6,}\.[a-z]{2,4}$/i; // file_abc123.jpg
 const SKIP_FRAMES_RE = /node_modules|webpack|blackbox|__webpack|hot-update|\(native\)|<anonymous>/i;
 
+// Firestore doc ID pattern: collection/docId where docId is 20-char alphanumeric
+const FIRESTORE_DOC_PATH_RE = /\b([a-zA-Z_][a-zA-Z0-9_-]*)\/([\w]{16,28})\b/g;
+
+// ISO timestamps in messages
+const ISO_TIMESTAMP_RE = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[.\dZ+-]*/g;
+
+// Chunk/bundle filenames that change across deploys
+const CHUNK_FILENAME_RE = /chunk-[a-zA-Z0-9]{6,}\.(m?js)/g;
+const BUNDLE_HASH_RE = /\b[a-f0-9]{8,}\.bundle\.(m?js)/g;
+
 function stripQueryParams(path) {
   if (!path) return '';
   try {
@@ -56,6 +66,29 @@ function normalizeMessageUrls(message) {
   });
 }
 
+/**
+ * Normalize dynamic content in error messages for stable fingerprinting.
+ * Strips Firestore doc IDs, timestamps, and other variable data.
+ */
+function normalizeMessage(message) {
+  if (!message) return '';
+  let normalized = message.slice(0, 100);
+
+  // Normalize embedded URLs
+  normalized = normalizeMessageUrls(normalized);
+
+  // Replace Firestore document paths: "catalogItems/XkgAOIE34NXD5vNMG7ud" → "catalogItems/:docId"
+  normalized = normalized.replace(FIRESTORE_DOC_PATH_RE, '$1/:docId');
+
+  // Replace ISO timestamps
+  normalized = normalized.replace(ISO_TIMESTAMP_RE, ':timestamp');
+
+  // Replace UUIDs in message text
+  normalized = normalized.replace(UUID_RE, ':id');
+
+  return normalized;
+}
+
 function extractTopAppFrame(stack) {
   if (!stack) return '';
   const lines = stack.split('\n');
@@ -65,7 +98,11 @@ function extractTopAppFrame(stack) {
     if (!trimmed || !trimmed.includes('at ')) continue;
     // Skip framework/bundler/blackbox frames
     if (SKIP_FRAMES_RE.test(trimmed)) continue;
-    return trimmed;
+    // Normalize chunk filenames that change across deploys
+    let normalized = trimmed;
+    normalized = normalized.replace(CHUNK_FILENAME_RE, 'chunk-:hash.$1');
+    normalized = normalized.replace(BUNDLE_HASH_RE, ':hash.bundle.$1');
+    return normalized;
   }
   return '';
 }
@@ -98,7 +135,7 @@ function hashString(str) {
 }
 
 export function generateFingerprint(message, source, path, stack) {
-  const truncatedMessage = normalizeMessageUrls((message || '').slice(0, 100));
+  const truncatedMessage = normalizeMessage(message);
   const normalizedPath = normalizePath(path);
   const topFrame = extractTopAppFrame(stack);
 

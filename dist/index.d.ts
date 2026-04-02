@@ -63,10 +63,13 @@ export interface CapturedError {
 
 export interface PersistedError {
   id: string;
+  fingerprint: string;
   message: string;
   stack: string;
   source: string;
+  path: string;
   breadcrumbs: Breadcrumb[];
+  context: Record<string, any>;
   occurrences: number;
   firstSeen: string;
   lastSeen: string;
@@ -80,7 +83,17 @@ export interface SuspiciousSilence {
     text?: string;
     [key: string]: any;
   };
+  /** 'click_without_followup' | 'repeated_silence' | 'user_stuck' */
+  action: string;
   timestamp: string;
+  /** Error that occurred within the silence window, if any */
+  relatedError?: {
+    message: string;
+    source: string;
+    fingerprint: string | null;
+  };
+  /** Number of related silences when action is 'user_stuck' */
+  relatedSilenceCount?: number;
   [key: string]: any;
 }
 

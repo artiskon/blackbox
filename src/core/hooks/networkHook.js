@@ -50,14 +50,46 @@ export function installNetworkHook(blackbox) {
             || (err.name === 'TypeError' && errMsg === 'Failed to fetch');
 
           const crumbData = { method, url, status: 0, duration, ok: false, error: errMsg };
-          if (corsBlocked) crumbData.cors_blocked = true;
+          const errorContext = { method, url, duration };
+
+          if (corsBlocked) {
+            crumbData.cors_blocked = true;
+            errorContext.cors_blocked = true;
+            // Capture what triggered the preflight — the method and non-simple headers
+            errorContext.preflight_trigger_method = method;
+            try {
+              const SIMPLE_HEADERS = ['accept', 'accept-language', 'content-language', 'content-type'];
+              const reqHeaders = init.headers;
+              const nonSimple = [];
+              if (reqHeaders) {
+                const entries = reqHeaders instanceof Headers
+                  ? [...reqHeaders.entries()]
+                  : Object.entries(reqHeaders);
+                for (const [k] of entries) {
+                  if (!SIMPLE_HEADERS.includes(k.toLowerCase())) nonSimple.push(k);
+                }
+                // content-type is only "simple" for form values
+                const ct = (reqHeaders instanceof Headers ? reqHeaders.get('content-type') : reqHeaders['content-type'] || reqHeaders['Content-Type']) || '';
+                if (ct && !ct.startsWith('application/x-www-form-urlencoded') && !ct.startsWith('multipart/form-data') && !ct.startsWith('text/plain')) {
+                  nonSimple.push('content-type(' + ct.split(';')[0] + ')');
+                }
+              }
+              if (nonSimple.length > 0) errorContext.preflight_trigger_headers = nonSimple;
+              // For non-GET/HEAD/POST methods, the method itself triggers the preflight
+              if (!['GET', 'HEAD', 'POST'].includes(method)) {
+                errorContext.preflight_reason = 'non-simple method: ' + method;
+              } else if (nonSimple.length > 0) {
+                errorContext.preflight_reason = 'non-simple headers: ' + nonSimple.join(', ');
+              }
+            } catch { /* ignore header inspection errors */ }
+          }
 
           blackbox._addBreadcrumb('network', crumbData);
           blackbox._recordError({
             message: `Network error: ${method} ${url} - ${errMsg}`,
             stack: err.stack || '',
             source: 'network',
-            context: { method, url, duration, ...(corsBlocked ? { cors_blocked: true } : {}) }
+            context: errorContext
           });
         } catch { /* ignore */ }
         throw err;

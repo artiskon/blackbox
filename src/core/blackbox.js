@@ -1,5 +1,6 @@
 import { DEFAULTS } from './constants.js';
 import { generateSessionId } from './session.js';
+import { generateFingerprint } from './fingerprint.js';
 import { BreadcrumbManager } from './breadcrumbs.js';
 import { installErrorHook } from './hooks/errorHook.js';
 import { installClickHook } from './hooks/clickHook.js';
@@ -294,6 +295,18 @@ const blackbox = {
         if (data.createdAt?.toDate) data.createdAt = data.createdAt.toDate().toISOString();
         return { id: d.id, ...data };
       });
+
+      // Rank by impact: occurrences × recency score (0-1 based on last 24h)
+      const now = Date.now();
+      const DAY_MS = 24 * 60 * 60 * 1000;
+      errors.sort((a, b) => {
+        const recencyA = Math.max(0, 1 - (now - new Date(a.lastSeen).getTime()) / DAY_MS);
+        const recencyB = Math.max(0, 1 - (now - new Date(b.lastSeen).getTime()) / DAY_MS);
+        const scoreA = (a.occurrences || 1) * (0.3 + 0.7 * recencyA);
+        const scoreB = (b.occurrences || 1) * (0.3 + 0.7 * recencyB);
+        return scoreB - scoreA;
+      });
+
       return { errors, connected: true };
     } catch (e) {
       return { errors: [], connected: false, error: e.message };
@@ -466,6 +479,16 @@ const blackbox = {
         message = message.split(/\nImport trace/)[0].trim();
       }
 
+      // Extract Firestore index creation URL from "requires an index" errors
+      if (message && message.includes('requires an index')) {
+        try {
+          const indexUrlMatch = message.match(/https:\/\/console\.firebase\.google\.com[^\s"')]+/);
+          if (indexUrlMatch) {
+            context = { ...context, action_url: indexUrlMatch[0], action_hint: 'Create the missing Firestore index' };
+          }
+        } catch { /* ignore */ }
+      }
+
       _writingError = true;
       _errorCount++;
 
@@ -473,7 +496,11 @@ const blackbox = {
         ? message.slice(0, _config.maxMessageLength)
         : '';
 
+      // Generate fingerprint for in-memory correlation (silence ↔ error linking)
+      const { fingerprint: _fp } = generateFingerprint(truncatedMessage, source, _getCurrentPath(), stack);
+
       const entry = {
+        _fingerprint: _fp,
         message: truncatedMessage,
         stack: stack || '',
         source,
@@ -562,12 +589,50 @@ const blackbox = {
           return;
         }
         if (!hasFollowup) {
+          // Correlate with errors that occurred shortly after the click (within the silence window)
+          let relatedError = null;
+          const recentErrs = _errors.slice(-10);
+          for (const err of recentErrs) {
+            const errTime = err.metadata?.timestamp ? new Date(err.metadata.timestamp).getTime() : 0;
+            if (errTime > clickTime && errTime < clickTime + _config.silenceDetectionDelay + 500) {
+              relatedError = { message: err.message, source: err.source, fingerprint: err._fingerprint || null };
+              break;
+            }
+          }
+
+          // Also check persisted history: errors from prior sessions matching this action
+          // (lightweight check against in-memory error buffer only)
+
           const silence = {
             type: 'suspicious_silence',
             action: 'click_without_followup',
             clickedElement: clickDetails,
-            waitedMs: _config.silenceDetectionDelay
+            waitedMs: _config.silenceDetectionDelay,
+            ...(relatedError ? { relatedError } : {})
           };
+
+          // Repeated silence grouping: detect "user is stuck" pattern
+          const recentSilences = _suspiciousSilences.filter(s => {
+            const sTime = s._timestamp || 0;
+            return (clickTime - sTime) < 15000; // within 15 seconds
+          });
+          const isSameAction = recentSilences.some(s =>
+            s.clickedElement?.tag === clickDetails.tag &&
+            (s.clickedElement?.text === clickDetails.text || s.clickedElement?.dataBb === clickDetails.dataBb)
+          );
+          const relatedSilenceCount = recentSilences.filter(s =>
+            s.clickedElement?.tag === clickDetails.tag
+          ).length;
+
+          if (relatedSilenceCount >= 2) {
+            // 3rd+ silence on similar elements within 15s — mark as "user stuck"
+            silence.action = 'user_stuck';
+            silence.relatedSilenceCount = relatedSilenceCount + 1;
+          } else if (isSameAction) {
+            silence.action = 'repeated_silence';
+          }
+
+          silence._timestamp = clickTime;
           _suspiciousSilences.push(silence);
           if (_suspiciousSilences.length > 20) _suspiciousSilences.shift();
           blackbox._addBreadcrumb('suspicious_silence', silence);

@@ -8,7 +8,7 @@ import {
   getPersistenceConfig,
   initPersistence,
   isCircuitOpen
-} from "./chunk-DTHOA46Q.js";
+} from "./chunk-2CCLB3BN.js";
 export {
   _resetPersistence,
   _setCollectionRef,

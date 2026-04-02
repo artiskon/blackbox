@@ -36,6 +36,10 @@ var UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 var NUMERIC_ID_RE = /\/\d+(?=\/|$)/g;
 var HASH_SEGMENT_RE = /\/[a-zA-Z0-9]{15,}(?=\/|$)/g;
 var SKIP_FRAMES_RE = /node_modules|webpack|blackbox|__webpack|hot-update|\(native\)|<anonymous>/i;
+var FIRESTORE_DOC_PATH_RE = /\b([a-zA-Z_][a-zA-Z0-9_-]*)\/([\w]{16,28})\b/g;
+var ISO_TIMESTAMP_RE = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[.\dZ+-]*/g;
+var CHUNK_FILENAME_RE = /chunk-[a-zA-Z0-9]{6,}\.(m?js)/g;
+var BUNDLE_HASH_RE = /\b[a-f0-9]{8,}\.bundle\.(m?js)/g;
 function stripQueryParams(path) {
   if (!path) return "";
   try {
@@ -73,6 +77,15 @@ function normalizeMessageUrls(message) {
     }
   });
 }
+function normalizeMessage(message) {
+  if (!message) return "";
+  let normalized = message.slice(0, 100);
+  normalized = normalizeMessageUrls(normalized);
+  normalized = normalized.replace(FIRESTORE_DOC_PATH_RE, "$1/:docId");
+  normalized = normalized.replace(ISO_TIMESTAMP_RE, ":timestamp");
+  normalized = normalized.replace(UUID_RE, ":id");
+  return normalized;
+}
 function extractTopAppFrame(stack) {
   if (!stack) return "";
   const lines = stack.split("\n");
@@ -80,7 +93,10 @@ function extractTopAppFrame(stack) {
     const trimmed = line.trim();
     if (!trimmed || !trimmed.includes("at ")) continue;
     if (SKIP_FRAMES_RE.test(trimmed)) continue;
-    return trimmed;
+    let normalized = trimmed;
+    normalized = normalized.replace(CHUNK_FILENAME_RE, "chunk-:hash.$1");
+    normalized = normalized.replace(BUNDLE_HASH_RE, ":hash.bundle.$1");
+    return normalized;
   }
   return "";
 }
@@ -107,7 +123,7 @@ function hashString(str) {
   return result;
 }
 function generateFingerprint(message, source, path, stack) {
-  const truncatedMessage = normalizeMessageUrls((message || "").slice(0, 100));
+  const truncatedMessage = normalizeMessage(message);
   const normalizedPath = normalizePath(path);
   const topFrame = extractTopAppFrame(stack);
   const input = `${truncatedMessage}|${source || ""}|${normalizedPath}|${topFrame}`;
@@ -459,6 +475,7 @@ export {
   __spreadValues,
   __spreadProps,
   __objRest,
+  generateFingerprint,
   initPersistence,
   isCircuitOpen,
   getCollectionRef,

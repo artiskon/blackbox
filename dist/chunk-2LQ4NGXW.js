@@ -1,14 +1,16 @@
 'use client';
 import {
   __objRest,
+  __spreadProps,
   __spreadValues,
   _resetPersistence,
+  generateFingerprint,
   getCollectionRef,
   getFirestoreFunctions,
   getPersistenceConfig,
   initPersistence,
   isCircuitOpen
-} from "./chunk-DTHOA46Q.js";
+} from "./chunk-2CCLB3BN.js";
 
 // src/core/constants.js
 var DEFAULTS = {
@@ -397,13 +399,40 @@ function installNetworkHook(blackbox2) {
           const errMsg = err.message || "";
           const corsBlocked = /cors|blocked|cross.origin|not allowed by access/i.test(errMsg) || err.name === "TypeError" && errMsg === "Failed to fetch";
           const crumbData = { method, url, status: 0, duration, ok: false, error: errMsg };
-          if (corsBlocked) crumbData.cors_blocked = true;
+          const errorContext = { method, url, duration };
+          if (corsBlocked) {
+            crumbData.cors_blocked = true;
+            errorContext.cors_blocked = true;
+            errorContext.preflight_trigger_method = method;
+            try {
+              const SIMPLE_HEADERS = ["accept", "accept-language", "content-language", "content-type"];
+              const reqHeaders = init.headers;
+              const nonSimple = [];
+              if (reqHeaders) {
+                const entries = reqHeaders instanceof Headers ? [...reqHeaders.entries()] : Object.entries(reqHeaders);
+                for (const [k] of entries) {
+                  if (!SIMPLE_HEADERS.includes(k.toLowerCase())) nonSimple.push(k);
+                }
+                const ct = (reqHeaders instanceof Headers ? reqHeaders.get("content-type") : reqHeaders["content-type"] || reqHeaders["Content-Type"]) || "";
+                if (ct && !ct.startsWith("application/x-www-form-urlencoded") && !ct.startsWith("multipart/form-data") && !ct.startsWith("text/plain")) {
+                  nonSimple.push("content-type(" + ct.split(";")[0] + ")");
+                }
+              }
+              if (nonSimple.length > 0) errorContext.preflight_trigger_headers = nonSimple;
+              if (!["GET", "HEAD", "POST"].includes(method)) {
+                errorContext.preflight_reason = "non-simple method: " + method;
+              } else if (nonSimple.length > 0) {
+                errorContext.preflight_reason = "non-simple headers: " + nonSimple.join(", ");
+              }
+            } catch (e) {
+            }
+          }
           blackbox2._addBreadcrumb("network", crumbData);
           blackbox2._recordError({
             message: `Network error: ${method} ${url} - ${errMsg}`,
             stack: err.stack || "",
             source: "network",
-            context: __spreadValues({ method, url, duration }, corsBlocked ? { cors_blocked: true } : {})
+            context: errorContext
           });
         } catch (e) {
         }
@@ -901,7 +930,7 @@ var blackbox = {
   // --- Firestore query methods for the UI panel ---
   async queryPersistedErrors(limit = 50) {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-QOVTBEMY.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-TYIDV3BI.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { errors: [], connected: false };
@@ -918,6 +947,15 @@ var blackbox = {
         if ((_c = data.createdAt) == null ? void 0 : _c.toDate) data.createdAt = data.createdAt.toDate().toISOString();
         return __spreadValues({ id: d.id }, data);
       });
+      const now = Date.now();
+      const DAY_MS = 24 * 60 * 60 * 1e3;
+      errors.sort((a, b) => {
+        const recencyA = Math.max(0, 1 - (now - new Date(a.lastSeen).getTime()) / DAY_MS);
+        const recencyB = Math.max(0, 1 - (now - new Date(b.lastSeen).getTime()) / DAY_MS);
+        const scoreA = (a.occurrences || 1) * (0.3 + 0.7 * recencyA);
+        const scoreB = (b.occurrences || 1) * (0.3 + 0.7 * recencyB);
+        return scoreB - scoreA;
+      });
       return { errors, connected: true };
     } catch (e) {
       return { errors: [], connected: false, error: e.message };
@@ -925,7 +963,7 @@ var blackbox = {
   },
   async queryHealth() {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-QOVTBEMY.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-TYIDV3BI.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { connected: false };
@@ -963,7 +1001,7 @@ var blackbox = {
   },
   async queryTimeline(minutes = 5) {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-QOVTBEMY.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-TYIDV3BI.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { events: [], connected: false };
@@ -992,7 +1030,7 @@ var blackbox = {
   },
   async clearPersistedErrors() {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-QOVTBEMY.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-TYIDV3BI.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref || !fns.deleteDoc) return { success: false, error: "Not connected to Firestore" };
@@ -1059,10 +1097,21 @@ var blackbox = {
       if (message && message.includes("Import trace")) {
         message = message.split(/\nImport trace/)[0].trim();
       }
+      if (message && message.includes("requires an index")) {
+        try {
+          const indexUrlMatch = message.match(/https:\/\/console\.firebase\.google\.com[^\s"')]+/);
+          if (indexUrlMatch) {
+            context = __spreadProps(__spreadValues({}, context), { action_url: indexUrlMatch[0], action_hint: "Create the missing Firestore index" });
+          }
+        } catch (e) {
+        }
+      }
       _writingError = true;
       _errorCount++;
       const truncatedMessage = message ? message.slice(0, _config.maxMessageLength) : "";
+      const { fingerprint: _fp } = generateFingerprint(truncatedMessage, source, _getCurrentPath(), stack);
       const entry = {
+        _fingerprint: _fp,
         message: truncatedMessage,
         stack: stack || "",
         source,
@@ -1138,6 +1187,7 @@ var blackbox = {
     if (!_initialized) return;
     const clickTime = Date.now();
     const checkId = setTimeout(() => {
+      var _a;
       try {
         const crumbs = _breadcrumbs ? _breadcrumbs.snapshot() : [];
         const meaningfulTypes = ["network", "navigation", "warning", "error", "custom", "form"];
@@ -1149,12 +1199,44 @@ var blackbox = {
           return;
         }
         if (!hasFollowup) {
-          const silence = {
+          let relatedError = null;
+          const recentErrs = _errors.slice(-10);
+          for (const err of recentErrs) {
+            const errTime = ((_a = err.metadata) == null ? void 0 : _a.timestamp) ? new Date(err.metadata.timestamp).getTime() : 0;
+            if (errTime > clickTime && errTime < clickTime + _config.silenceDetectionDelay + 500) {
+              relatedError = { message: err.message, source: err.source, fingerprint: err._fingerprint || null };
+              break;
+            }
+          }
+          const silence = __spreadValues({
             type: "suspicious_silence",
             action: "click_without_followup",
             clickedElement: clickDetails,
             waitedMs: _config.silenceDetectionDelay
-          };
+          }, relatedError ? { relatedError } : {});
+          const recentSilences = _suspiciousSilences.filter((s) => {
+            const sTime = s._timestamp || 0;
+            return clickTime - sTime < 15e3;
+          });
+          const isSameAction = recentSilences.some(
+            (s) => {
+              var _a2, _b, _c;
+              return ((_a2 = s.clickedElement) == null ? void 0 : _a2.tag) === clickDetails.tag && (((_b = s.clickedElement) == null ? void 0 : _b.text) === clickDetails.text || ((_c = s.clickedElement) == null ? void 0 : _c.dataBb) === clickDetails.dataBb);
+            }
+          );
+          const relatedSilenceCount = recentSilences.filter(
+            (s) => {
+              var _a2;
+              return ((_a2 = s.clickedElement) == null ? void 0 : _a2.tag) === clickDetails.tag;
+            }
+          ).length;
+          if (relatedSilenceCount >= 2) {
+            silence.action = "user_stuck";
+            silence.relatedSilenceCount = relatedSilenceCount + 1;
+          } else if (isSameAction) {
+            silence.action = "repeated_silence";
+          }
+          silence._timestamp = clickTime;
           _suspiciousSilences.push(silence);
           if (_suspiciousSilences.length > 20) _suspiciousSilences.shift();
           blackbox._addBreadcrumb("suspicious_silence", silence);
