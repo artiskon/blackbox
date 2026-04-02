@@ -921,6 +921,7 @@ var blackbox = {
     _errorCount = 0;
     _errors = [];
     _suspiciousSilences = [];
+    if (_breadcrumbs) _breadcrumbs.clear();
     _notifySubscribers();
   },
   getBreadcrumbs() {

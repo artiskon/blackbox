@@ -1,7 +1,7 @@
 'use client';
 import {
   blackbox_default
-} from "./chunk-2LQ4NGXW.js";
+} from "./chunk-GVQB4SJY.js";
 
 // src/core/hooks/firebaseHook.js
 async function bbFirestoreOp(operationName, promise, details = {}) {
