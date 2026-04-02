@@ -2,7 +2,7 @@
 import {
   BlackBoxPanelWrapper,
   BlackBoxProvider_default
-} from "./chunk-UHRG7O6B.js";
+} from "./chunk-VYEXMC6E.js";
 import {
   bbFirestoreOp,
   bbOnSnapshot,

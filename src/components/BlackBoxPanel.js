@@ -147,6 +147,13 @@ function BlackBoxPanel() {
   const isConnected = blackbox.isConnectedToFirestore();
 
   async function copyFullReport() {
+    // Nothing to copy if session is empty
+    const hasErrors = errors.length > 0;
+    const hasSilences = silences.length > 0;
+    const hasBreadcrumbs = blackbox.getBreadcrumbs?.().length > 0;
+    const hasHistory = historyLoaded && historyErrors.length > 0;
+    if (!hasErrors && !hasSilences && !hasBreadcrumbs && !hasHistory) return;
+
     const config = blackbox._getConfig();
 
     // -- Helpers for compact output --

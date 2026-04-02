@@ -166,7 +166,12 @@ function BlackBoxPanel() {
   const [copiedErrorKey, setCopiedErrorKey] = useState(null);
   const isConnected = blackbox_default.isConnectedToFirestore();
   async function copyFullReport() {
-    var _a, _b;
+    var _a, _b, _c, _d;
+    const hasErrors = errors.length > 0;
+    const hasSilences2 = silences.length > 0;
+    const hasBreadcrumbs = ((_b = (_a = blackbox_default).getBreadcrumbs) == null ? void 0 : _b.call(_a).length) > 0;
+    const hasHistory = historyLoaded && historyErrors.length > 0;
+    if (!hasErrors && !hasSilences2 && !hasBreadcrumbs && !hasHistory) return;
     const config = blackbox_default._getConfig();
     function cleanStack(stack) {
       if (!stack) return void 0;
@@ -216,7 +221,7 @@ function BlackBoxPanel() {
     for (const err of [...errors].reverse()) {
       const msg = (err.message || "").slice(0, 80);
       const msgNorm = stripUncaught(msg);
-      const ts = ((_a = err.metadata) == null ? void 0 : _a.timestamp) || "";
+      const ts = ((_c = err.metadata) == null ? void 0 : _c.timestamp) || "";
       const key = `${err.source}:${msg}`;
       let merged = false;
       if (ts) {
@@ -245,7 +250,7 @@ function BlackBoxPanel() {
         source: err.source,
         stack: cleanStack(err.stack),
         path: err.path || err.url,
-        timestamp: (_b = err.metadata) == null ? void 0 : _b.timestamp,
+        timestamp: (_d = err.metadata) == null ? void 0 : _d.timestamp,
         count: 1
       }, err._stormCount ? { storm: true, stormCount: err._stormCount } : {}));
       if (err.context && Object.keys(err.context).length > 0) {
