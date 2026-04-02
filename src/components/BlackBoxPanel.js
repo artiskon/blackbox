@@ -151,7 +151,7 @@ function BlackBoxPanel() {
     // Nothing to copy if session is empty
     const hasErrors = errors.length > 0;
     const hasSilences = silences.length > 0;
-    const hasBreadcrumbs = blackbox.getBreadcrumbs?.().length > 0;
+    const hasBreadcrumbs = (blackbox.getBreadcrumbs?.() || []).some(c => c.type !== 'system');
     const hasHistory = historyLoaded && historyErrors.length > 0;
     if (!hasErrors && !hasSilences && !hasBreadcrumbs && !hasHistory) {
       setReportEmpty(true);

@@ -170,7 +170,7 @@ function BlackBoxPanel() {
     var _a, _b, _c, _d;
     const hasErrors = errors.length > 0;
     const hasSilences2 = silences.length > 0;
-    const hasBreadcrumbs = ((_b = (_a = blackbox_default).getBreadcrumbs) == null ? void 0 : _b.call(_a).length) > 0;
+    const hasBreadcrumbs = (((_b = (_a = blackbox_default).getBreadcrumbs) == null ? void 0 : _b.call(_a)) || []).some((c) => c.type !== "system");
     const hasHistory = historyLoaded && historyErrors.length > 0;
     if (!hasErrors && !hasSilences2 && !hasBreadcrumbs && !hasHistory) {
       setReportEmpty(true);
