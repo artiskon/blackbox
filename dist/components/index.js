@@ -2,7 +2,7 @@
 import {
   BlackBoxPanelWrapper,
   BlackBoxProvider_default
-} from "../chunk-QNVAVE7X.js";
+} from "../chunk-CQZWVUTP.js";
 import "../chunk-GVQB4SJY.js";
 import "../chunk-2CCLB3BN.js";
 export {

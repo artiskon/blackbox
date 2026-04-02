@@ -141,6 +141,7 @@ function BlackBoxPanel() {
   const [expandedStacks, setExpandedStacks] = useState(new Set());
   const [activeFilters, setActiveFilters] = useState(new Set(BREADCRUMB_FILTER_TYPES));
   const [reportCopied, setReportCopied] = useState(false);
+  const [reportEmpty, setReportEmpty] = useState(false);
   const [reportText, setReportText] = useState(null);
   const [copiedErrorKey, setCopiedErrorKey] = useState(null);
 
@@ -152,7 +153,11 @@ function BlackBoxPanel() {
     const hasSilences = silences.length > 0;
     const hasBreadcrumbs = blackbox.getBreadcrumbs?.().length > 0;
     const hasHistory = historyLoaded && historyErrors.length > 0;
-    if (!hasErrors && !hasSilences && !hasBreadcrumbs && !hasHistory) return;
+    if (!hasErrors && !hasSilences && !hasBreadcrumbs && !hasHistory) {
+      setReportEmpty(true);
+      setTimeout(() => setReportEmpty(false), 1500);
+      return;
+    }
 
     const config = blackbox._getConfig();
 
@@ -611,8 +616,8 @@ function BlackBoxPanel() {
                   🔍
                 </span>
                 {/* Copy full report */}
-                <span onClick={copyFullReport} title="Copy full diagnostic report as JSON" style={{ cursor: 'pointer', fontSize: '13px', color: reportCopied ? '#22c55e' : '#999', padding: '4px 8px', borderRadius: '4px', transition: 'color 0.15s' }}>
-                  {reportCopied ? '✓' : '📋'}
+                <span onClick={copyFullReport} title="Copy full diagnostic report as JSON" style={{ cursor: 'pointer', fontSize: '13px', color: reportCopied ? '#22c55e' : reportEmpty ? '#f59e0b' : '#999', padding: '4px 8px', borderRadius: '4px', transition: 'color 0.15s' }}>
+                  {reportCopied ? '✓' : reportEmpty ? '∅' : '📋'}
                 </span>
                 {/* Expand/collapse toggle */}
                 <span onClick={() => setIsExpanded(prev => !prev)} style={{ cursor: 'pointer', fontSize: '16px', color: '#999', padding: '4px 8px', borderRadius: '4px' }}>

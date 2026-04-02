@@ -162,6 +162,7 @@ function BlackBoxPanel() {
   const [expandedStacks, setExpandedStacks] = useState(/* @__PURE__ */ new Set());
   const [activeFilters, setActiveFilters] = useState(new Set(BREADCRUMB_FILTER_TYPES));
   const [reportCopied, setReportCopied] = useState(false);
+  const [reportEmpty, setReportEmpty] = useState(false);
   const [reportText, setReportText] = useState(null);
   const [copiedErrorKey, setCopiedErrorKey] = useState(null);
   const isConnected = blackbox_default.isConnectedToFirestore();
@@ -171,7 +172,11 @@ function BlackBoxPanel() {
     const hasSilences2 = silences.length > 0;
     const hasBreadcrumbs = ((_b = (_a = blackbox_default).getBreadcrumbs) == null ? void 0 : _b.call(_a).length) > 0;
     const hasHistory = historyLoaded && historyErrors.length > 0;
-    if (!hasErrors && !hasSilences2 && !hasBreadcrumbs && !hasHistory) return;
+    if (!hasErrors && !hasSilences2 && !hasBreadcrumbs && !hasHistory) {
+      setReportEmpty(true);
+      setTimeout(() => setReportEmpty(false), 1500);
+      return;
+    }
     const config = blackbox_default._getConfig();
     function cleanStack(stack) {
       if (!stack) return void 0;
@@ -618,7 +623,7 @@ function BlackBoxPanel() {
         /* @__PURE__ */ jsx("span", { style: { fontSize: "10px", color: "#666" }, children: isConnected ? "DB connected" : "Local only" }),
         /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", gap: "2px" }, children: [
           /* @__PURE__ */ jsx("span", { onClick: () => setSearchOpen(true), title: "Search errors", style: { cursor: "pointer", fontSize: "13px", color: "#999", padding: "4px 8px", borderRadius: "4px", transition: "color 0.15s" }, children: "\u{1F50D}" }),
-          /* @__PURE__ */ jsx("span", { onClick: copyFullReport, title: "Copy full diagnostic report as JSON", style: { cursor: "pointer", fontSize: "13px", color: reportCopied ? "#22c55e" : "#999", padding: "4px 8px", borderRadius: "4px", transition: "color 0.15s" }, children: reportCopied ? "\u2713" : "\u{1F4CB}" }),
+          /* @__PURE__ */ jsx("span", { onClick: copyFullReport, title: "Copy full diagnostic report as JSON", style: { cursor: "pointer", fontSize: "13px", color: reportCopied ? "#22c55e" : reportEmpty ? "#f59e0b" : "#999", padding: "4px 8px", borderRadius: "4px", transition: "color 0.15s" }, children: reportCopied ? "\u2713" : reportEmpty ? "\u2205" : "\u{1F4CB}" }),
           /* @__PURE__ */ jsx("span", { onClick: () => setIsExpanded((prev) => !prev), style: { cursor: "pointer", fontSize: "16px", color: "#999", padding: "4px 8px", borderRadius: "4px" }, children: isExpanded ? "\u2921" : "\u2922" }),
           /* @__PURE__ */ jsx("span", { onClick: () => {
             setIsOpen(false);
