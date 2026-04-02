@@ -294,13 +294,25 @@ function BlackBoxPanel() {
     });
 
     if (historyLoaded && historyErrors.length > 0) {
+      // Group by normalized message+source instead of raw fingerprint
+      // so old errors with fragmented fingerprints still merge correctly
+      function normalizeHistoryKey(msg, source) {
+        let m = (msg || '').slice(0, 100).toLowerCase();
+        // Strip trailing numbers (#5, #12)
+        m = m.replace(/\s*[#(]\d+[)]?\s*$/, '');
+        // Normalize URLs
+        m = m.replace(/https?:\/\/[^\s"']+/g, '<url>');
+        // Normalize Firestore doc paths
+        m = m.replace(/\b([a-zA-Z_]\w*)\/([\w]{16,28})\b/g, '$1/:docId');
+        return `${source}:${m}`;
+      }
       const hGroups = new Map();
       for (const err of historyErrors) {
-        const fp = err.fingerprint || 'unknown';
-        if (!hGroups.has(fp)) hGroups.set(fp, { message: err.message, source: err.source, fingerprint: fp, occurrences: 0, lastSeen: err.lastSeen });
-        const g = hGroups.get(fp);
+        const key = normalizeHistoryKey(err.message, err.source);
+        if (!hGroups.has(key)) hGroups.set(key, { message: err.message, source: err.source, occurrences: 0, lastSeen: err.lastSeen });
+        const g = hGroups.get(key);
         g.occurrences += (err.occurrences || 1);
-        if (err.lastSeen > g.lastSeen) g.lastSeen = err.lastSeen;
+        if (err.lastSeen > g.lastSeen) { g.lastSeen = err.lastSeen; g.message = err.message; }
       }
       report.history = [...hGroups.values()];
     }

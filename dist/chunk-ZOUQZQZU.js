@@ -1,11 +1,11 @@
 'use client';
 import {
   blackbox_default
-} from "./chunk-GVQB4SJY.js";
+} from "./chunk-WTGXUSFZ.js";
 import {
   __spreadProps,
   __spreadValues
-} from "./chunk-2CCLB3BN.js";
+} from "./chunk-RMEFQ3AJ.js";
 
 // src/components/BlackBoxPanel.js
 import { useState, useEffect, useCallback } from "react";
@@ -297,13 +297,24 @@ function BlackBoxPanel() {
       breadcrumbs: (blackbox_default.getBreadcrumbs ? blackbox_default.getBreadcrumbs() : []).map(compactBreadcrumb)
     });
     if (historyLoaded && historyErrors.length > 0) {
+      let normalizeHistoryKey2 = function(msg, source) {
+        let m = (msg || "").slice(0, 100).toLowerCase();
+        m = m.replace(/\s*[#(]\d+[)]?\s*$/, "");
+        m = m.replace(/https?:\/\/[^\s"']+/g, "<url>");
+        m = m.replace(/\b([a-zA-Z_]\w*)\/([\w]{16,28})\b/g, "$1/:docId");
+        return `${source}:${m}`;
+      };
+      var normalizeHistoryKey = normalizeHistoryKey2;
       const hGroups = /* @__PURE__ */ new Map();
       for (const err of historyErrors) {
-        const fp = err.fingerprint || "unknown";
-        if (!hGroups.has(fp)) hGroups.set(fp, { message: err.message, source: err.source, fingerprint: fp, occurrences: 0, lastSeen: err.lastSeen });
-        const g = hGroups.get(fp);
+        const key = normalizeHistoryKey2(err.message, err.source);
+        if (!hGroups.has(key)) hGroups.set(key, { message: err.message, source: err.source, occurrences: 0, lastSeen: err.lastSeen });
+        const g = hGroups.get(key);
         g.occurrences += err.occurrences || 1;
-        if (err.lastSeen > g.lastSeen) g.lastSeen = err.lastSeen;
+        if (err.lastSeen > g.lastSeen) {
+          g.lastSeen = err.lastSeen;
+          g.message = err.message;
+        }
       }
       report.history = [...hGroups.values()];
     }

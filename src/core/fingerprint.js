@@ -18,6 +18,11 @@ const ISO_TIMESTAMP_RE = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[.\dZ+-]*/g;
 // Chunk/bundle filenames that change across deploys
 const CHUNK_FILENAME_RE = /chunk-[a-zA-Z0-9]{6,}\.(m?js)/g;
 const BUNDLE_HASH_RE = /\b[a-f0-9]{8,}\.bundle\.(m?js)/g;
+// Turbopack/Next.js module filenames: _e190d1e5._.js, node_modules_next_dist_compiled_2ce9398a._.js
+const TURBOPACK_MODULE_RE = /_[a-f0-9]{6,}\._\.(m?js)/g;
+
+// Trailing numeric identifiers in messages: "failure #5", "error (3)", "attempt 12"
+const TRAILING_NUMBER_RE = /\s*[#(]\d+[)]?\s*$/;
 
 function stripQueryParams(path) {
   if (!path) return '';
@@ -86,6 +91,9 @@ function normalizeMessage(message) {
   // Replace UUIDs in message text
   normalized = normalized.replace(UUID_RE, ':id');
 
+  // Strip trailing numeric identifiers (#5, #12, etc.)
+  normalized = normalized.replace(TRAILING_NUMBER_RE, '');
+
   return normalized;
 }
 
@@ -98,10 +106,11 @@ function extractTopAppFrame(stack) {
     if (!trimmed || !trimmed.includes('at ')) continue;
     // Skip framework/bundler/blackbox frames
     if (SKIP_FRAMES_RE.test(trimmed)) continue;
-    // Normalize chunk filenames that change across deploys
+    // Normalize chunk/module filenames that change across deploys
     let normalized = trimmed;
     normalized = normalized.replace(CHUNK_FILENAME_RE, 'chunk-:hash.$1');
     normalized = normalized.replace(BUNDLE_HASH_RE, ':hash.bundle.$1');
+    normalized = normalized.replace(TURBOPACK_MODULE_RE, '_:hash._.$1');
     return normalized;
   }
   return '';

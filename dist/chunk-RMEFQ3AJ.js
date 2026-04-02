@@ -40,6 +40,8 @@ var FIRESTORE_DOC_PATH_RE = /\b([a-zA-Z_][a-zA-Z0-9_-]*)\/([\w]{16,28})\b/g;
 var ISO_TIMESTAMP_RE = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[.\dZ+-]*/g;
 var CHUNK_FILENAME_RE = /chunk-[a-zA-Z0-9]{6,}\.(m?js)/g;
 var BUNDLE_HASH_RE = /\b[a-f0-9]{8,}\.bundle\.(m?js)/g;
+var TURBOPACK_MODULE_RE = /_[a-f0-9]{6,}\._\.(m?js)/g;
+var TRAILING_NUMBER_RE = /\s*[#(]\d+[)]?\s*$/;
 function stripQueryParams(path) {
   if (!path) return "";
   try {
@@ -84,6 +86,7 @@ function normalizeMessage(message) {
   normalized = normalized.replace(FIRESTORE_DOC_PATH_RE, "$1/:docId");
   normalized = normalized.replace(ISO_TIMESTAMP_RE, ":timestamp");
   normalized = normalized.replace(UUID_RE, ":id");
+  normalized = normalized.replace(TRAILING_NUMBER_RE, "");
   return normalized;
 }
 function extractTopAppFrame(stack) {
@@ -96,6 +99,7 @@ function extractTopAppFrame(stack) {
     let normalized = trimmed;
     normalized = normalized.replace(CHUNK_FILENAME_RE, "chunk-:hash.$1");
     normalized = normalized.replace(BUNDLE_HASH_RE, ":hash.bundle.$1");
+    normalized = normalized.replace(TURBOPACK_MODULE_RE, "_:hash._.$1");
     return normalized;
   }
   return "";
