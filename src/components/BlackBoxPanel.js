@@ -164,7 +164,19 @@ function BlackBoxPanel() {
     // -- Helpers for compact output --
     function cleanStack(stack) {
       if (!stack) return undefined;
-      return stack.split('\n').slice(0, 5).map(l =>
+      const skipPatterns = [
+        /bbHandleError/,
+        /at wrapped \(/,
+        /console\.wrapped/,
+        /consoleHook\.|errorHook\.|networkHook\./,
+        /node_modules_@artiskon_blackbox/,
+        /node_modules_.*\._\.js/,  // Turbopack minified module chunks
+        /node_modules_.*chunks.*\.js/,  // webpack chunks
+        /pdfjs-dist_build_pdf/,  // pdfjs noise
+        /^\s*at BaseExceptionClosure/,  // pdfjs exception internals
+      ];
+      const lines = stack.split('\n').filter(l => !skipPatterns.some(p => p.test(l)));
+      return lines.slice(0, 5).map(l =>
         l.replace(/https?:\/\/[^/]+\/_next\/static\/chunks\//, '')
          .replace(/https?:\/\/[^/]+\//, '/')
       ).join('\n');
@@ -251,15 +263,25 @@ function BlackBoxPanel() {
       });
       if (err.context && Object.keys(err.context).length > 0) {
         const ctx = { ...err.context };
-        // Remove fields already represented in message or bloated
-        delete ctx.responseBody;
-        delete ctx.requestBody;
+        // Keep responseBody and requestBody — they're often the single highest-
+        // signal field for same-origin API errors (e.g. {error: 'URL not allowed'}
+        // from an allowlist check tells you the cause instantly). Truncate to
+        // keep the report compact.
+        if (typeof ctx.responseBody === 'string' && ctx.responseBody.length > 400) {
+          ctx.responseBody = ctx.responseBody.slice(0, 400) + '…';
+        }
+        if (typeof ctx.requestBody === 'string' && ctx.requestBody.length > 400) {
+          ctx.requestBody = ctx.requestBody.slice(0, 400) + '…';
+        }
         if (err.source === 'network') {
           delete ctx.status;
           delete ctx.method;
           delete ctx.url;
         }
         if (Object.keys(ctx).length > 0) entry.context = ctx;
+      }
+      if (err.firedAs && Array.isArray(err.firedAs) && err.firedAs.length > 1) {
+        entry.firedAs = err.firedAs;
       }
       grouped.set(key, entry);
     }
@@ -277,7 +299,7 @@ function BlackBoxPanel() {
     // -- Build report --
     const report = stripNulls({
       _type: 'BlackBox Diagnostic Report',
-      _version: '1.5.0',
+      _version: '1.7.0',
       _generatedAt: new Date().toISOString(),
       _instructions: 'Errors are deduplicated (count = occurrences). Breadcrumbs are the single chronological trail of user actions for the session. Silences are buttons clicked with no followup (possible broken UI). History contains persisted errors from Firestore (grouped by fingerprint). Health is a 24h summary.',
       session: stripNulls({

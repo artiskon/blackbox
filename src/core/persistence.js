@@ -264,6 +264,7 @@ async function _doWrite(errorEntry) {
       message: errorEntry.message,
       stack: errorEntry.stack || '',
       source: errorEntry.source,
+      ...(errorEntry.firedAs && errorEntry.firedAs.length > 1 ? { firedAs: errorEntry.firedAs } : {}),
       url: errorEntry.url,
       path: errorEntry.path,
       breadcrumbs: errorEntry.breadcrumbs || [],

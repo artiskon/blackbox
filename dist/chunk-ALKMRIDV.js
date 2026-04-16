@@ -10,7 +10,7 @@ import {
   getPersistenceConfig,
   initPersistence,
   isCircuitOpen
-} from "./chunk-RMEFQ3AJ.js";
+} from "./chunk-ZPG5A7SC.js";
 
 // src/core/constants.js
 var DEFAULTS = {
@@ -376,10 +376,14 @@ function installNetworkHook(blackbox2) {
       }
       const method = (init.method || "GET").toUpperCase();
       let url = "";
+      let isSameOrigin = false;
       try {
         url = typeof input === "string" ? input : (input == null ? void 0 : input.url) || String(input);
         url = blackbox2._stripQueryParams(url);
         if (url.length > config.maxUrlLength) url = url.slice(0, config.maxUrlLength);
+        if (typeof location !== "undefined") {
+          isSameOrigin = !url.startsWith("http") || url.startsWith(location.origin);
+        }
       } catch (e) {
       }
       if (isExcludedUrl(url)) {
@@ -443,10 +447,13 @@ function installNetworkHook(blackbox2) {
         const status = response.status;
         const ok = response.ok;
         const crumbData = { method, url, status, duration, ok };
-        if (config.captureRequestBodies && config.maxBodyLength > 0) {
+        const bodyLimit = config.maxBodyLength > 0 ? config.maxBodyLength : 300;
+        const shouldCaptureReqBody = config.captureRequestBodies || isSameOrigin && ["POST", "PUT", "PATCH"].includes(method);
+        if (shouldCaptureReqBody) {
           try {
             if (init.body) {
-              crumbData.requestBody = String(init.body).slice(0, config.maxBodyLength);
+              const bodyStr = typeof init.body === "string" ? init.body : init.body instanceof FormData ? "[FormData: " + [...init.body.keys()].join(", ") + "]" : String(init.body);
+              crumbData.requestBody = bodyStr.slice(0, bodyLimit);
             }
           } catch (e) {
           }
@@ -915,7 +922,7 @@ var blackbox = {
     return _errors.slice(-limit);
   },
   getSuspiciousSilences() {
-    return [..._suspiciousSilences];
+    return _suspiciousSilences.filter((s) => s._surfaced);
   },
   clearErrors() {
     _errorCount = 0;
@@ -931,7 +938,7 @@ var blackbox = {
   // --- Firestore query methods for the UI panel ---
   async queryPersistedErrors(limit = 50) {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-RHXVUSRF.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-FT7VBGG4.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { errors: [], connected: false };
@@ -950,11 +957,17 @@ var blackbox = {
       });
       const now = Date.now();
       const DAY_MS = 24 * 60 * 60 * 1e3;
+      const isCascadeNoise = (msg) => {
+        if (!msg) return false;
+        return /INTERNAL ASSERTION FAILED|Unexpected state \(ID:|__PRIVATE_hardAssert|__PRIVATE__fail/i.test(msg);
+      };
       errors.sort((a, b) => {
         const recencyA = Math.max(0, 1 - (now - new Date(a.lastSeen).getTime()) / DAY_MS);
         const recencyB = Math.max(0, 1 - (now - new Date(b.lastSeen).getTime()) / DAY_MS);
-        const scoreA = (a.occurrences || 1) * (0.3 + 0.7 * recencyA);
-        const scoreB = (b.occurrences || 1) * (0.3 + 0.7 * recencyB);
+        const causeA = isCascadeNoise(a.message) ? 0.4 : 1;
+        const causeB = isCascadeNoise(b.message) ? 0.4 : 1;
+        const scoreA = (a.occurrences || 1) * (0.3 + 0.7 * recencyA) * causeA;
+        const scoreB = (b.occurrences || 1) * (0.3 + 0.7 * recencyB) * causeB;
         return scoreB - scoreA;
       });
       return { errors, connected: true };
@@ -964,7 +977,7 @@ var blackbox = {
   },
   async queryHealth() {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-RHXVUSRF.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-FT7VBGG4.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { connected: false };
@@ -1002,7 +1015,7 @@ var blackbox = {
   },
   async queryTimeline(minutes = 5) {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-RHXVUSRF.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-FT7VBGG4.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { events: [], connected: false };
@@ -1031,7 +1044,7 @@ var blackbox = {
   },
   async clearPersistedErrors() {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-RHXVUSRF.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-FT7VBGG4.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref || !fns.deleteDoc) return { success: false, error: "Not connected to Firestore" };
@@ -1078,9 +1091,19 @@ var blackbox = {
       }
       const now = Date.now();
       const norm = (message || "").replace(/^Uncaught\s+\w+:\s*/, "").slice(0, 100);
-      _recentErrors = _recentErrors.filter((r) => now - r.t < 150);
-      if (_recentErrors.some((r) => r.m === norm)) return;
-      _recentErrors.push({ m: norm, t: now });
+      _recentErrors = _recentErrors.filter((r) => now - r.t < 200);
+      const existingRecent = _recentErrors.find((r) => r.m === norm);
+      if (existingRecent) {
+        if (existingRecent.entry && source) {
+          existingRecent.entry.firedAs = existingRecent.entry.firedAs || [existingRecent.entry.source];
+          if (!existingRecent.entry.firedAs.includes(source)) {
+            existingRecent.entry.firedAs.push(source);
+          }
+        }
+        return;
+      }
+      const recentSlot = { m: norm, t: now, entry: null };
+      _recentErrors.push(recentSlot);
       const storm = _errorStorms.get(norm);
       if (storm && now - storm.firstSeen < ERROR_STORM_WINDOW) {
         storm.count++;
@@ -1101,9 +1124,11 @@ var blackbox = {
       if (message && message.includes("requires an index")) {
         try {
           const indexUrlMatch = message.match(/https:\/\/console\.firebase\.google\.com[^\s"')]+/);
-          if (indexUrlMatch) {
-            context = __spreadProps(__spreadValues({}, context), { action_url: indexUrlMatch[0], action_hint: "Create the missing Firestore index" });
-          }
+          const isBuilding = /currently building|cannot be used yet|is not yet usable/i.test(message);
+          const hint = isBuilding ? "Index is still building \u2014 wait 1\u20135 minutes and retry" : "Create the missing Firestore index";
+          context = __spreadValues(__spreadProps(__spreadValues(__spreadValues({}, context), indexUrlMatch ? { action_url: indexUrlMatch[0] } : {}), {
+            action_hint: hint
+          }), isBuilding ? { transient: true } : {});
         } catch (e) {
         }
       }
@@ -1116,6 +1141,7 @@ var blackbox = {
         message: truncatedMessage,
         stack: stack || "",
         source,
+        firedAs: source ? [source] : [],
         path: _getCurrentPath(),
         url: _stripQueryParams(window.location.href),
         breadcrumbs: _breadcrumbs ? _breadcrumbs.snapshot() : [],
@@ -1134,6 +1160,7 @@ var blackbox = {
       };
       _errors.push(entry);
       if (_errors.length > 50) _errors.shift();
+      recentSlot.entry = entry;
       const stormEntry = _errorStorms.get(norm);
       if (stormEntry) stormEntry.lastEntry = entry;
       blackbox._addBreadcrumb("error", { message: truncatedMessage, source });
@@ -1209,38 +1236,36 @@ var blackbox = {
               break;
             }
           }
-          const silence = __spreadValues({
+          const silence = __spreadProps(__spreadValues({
             type: "suspicious_silence",
             action: "click_without_followup",
             clickedElement: clickDetails,
             waitedMs: _config.silenceDetectionDelay
-          }, relatedError ? { relatedError } : {});
+          }, relatedError ? { relatedError } : {}), {
+            _timestamp: clickTime
+          });
           const recentSilences = _suspiciousSilences.filter((s) => {
             const sTime = s._timestamp || 0;
             return clickTime - sTime < 15e3;
           });
-          const isSameAction = recentSilences.some(
+          const relatedSilenceCount = recentSilences.filter(
             (s) => {
               var _a2, _b, _c;
               return ((_a2 = s.clickedElement) == null ? void 0 : _a2.tag) === clickDetails.tag && (((_b = s.clickedElement) == null ? void 0 : _b.text) === clickDetails.text || ((_c = s.clickedElement) == null ? void 0 : _c.dataBb) === clickDetails.dataBb);
             }
-          );
-          const relatedSilenceCount = recentSilences.filter(
-            (s) => {
-              var _a2;
-              return ((_a2 = s.clickedElement) == null ? void 0 : _a2.tag) === clickDetails.tag;
-            }
           ).length;
-          if (relatedSilenceCount >= 2) {
-            silence.action = "user_stuck";
-            silence.relatedSilenceCount = relatedSilenceCount + 1;
-          } else if (isSameAction) {
-            silence.action = "repeated_silence";
-          }
-          silence._timestamp = clickTime;
           _suspiciousSilences.push(silence);
           if (_suspiciousSilences.length > 20) _suspiciousSilences.shift();
-          blackbox._addBreadcrumb("suspicious_silence", silence);
+          const isUserStuck = relatedSilenceCount >= 2;
+          const hasRelatedError = !!relatedError;
+          if (isUserStuck || hasRelatedError) {
+            if (isUserStuck) {
+              silence.action = "user_stuck";
+              silence.relatedSilenceCount = relatedSilenceCount + 1;
+            }
+            silence._surfaced = true;
+            blackbox._addBreadcrumb("suspicious_silence", silence);
+          }
         }
       } catch (e) {
       }

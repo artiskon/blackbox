@@ -259,7 +259,9 @@ const blackbox = {
   },
 
   getSuspiciousSilences() {
-    return [..._suspiciousSilences];
+    // Only return silences we surfaced (user_stuck or correlated with an error).
+    // Raw single silences are kept internally for burst detection but not shown.
+    return _suspiciousSilences.filter(s => s._surfaced);
   },
 
   clearErrors() {
@@ -297,14 +299,22 @@ const blackbox = {
         return { id: d.id, ...data };
       });
 
-      // Rank by impact: occurrences × recency score (0-1 based on last 24h)
+      // Rank by impact: occurrences × recency × cause-weight.
+      // Cause-weight downranks SDK internal cascades (INTERNAL ASSERTION, etc.)
+      // that are noisy effects of a quieter root error like permission-denied.
       const now = Date.now();
       const DAY_MS = 24 * 60 * 60 * 1000;
+      const isCascadeNoise = (msg) => {
+        if (!msg) return false;
+        return /INTERNAL ASSERTION FAILED|Unexpected state \(ID:|__PRIVATE_hardAssert|__PRIVATE__fail/i.test(msg);
+      };
       errors.sort((a, b) => {
         const recencyA = Math.max(0, 1 - (now - new Date(a.lastSeen).getTime()) / DAY_MS);
         const recencyB = Math.max(0, 1 - (now - new Date(b.lastSeen).getTime()) / DAY_MS);
-        const scoreA = (a.occurrences || 1) * (0.3 + 0.7 * recencyA);
-        const scoreB = (b.occurrences || 1) * (0.3 + 0.7 * recencyB);
+        const causeA = isCascadeNoise(a.message) ? 0.4 : 1;
+        const causeB = isCascadeNoise(b.message) ? 0.4 : 1;
+        const scoreA = (a.occurrences || 1) * (0.3 + 0.7 * recencyA) * causeA;
+        const scoreB = (b.occurrences || 1) * (0.3 + 0.7 * recencyB) * causeB;
         return scoreB - scoreA;
       });
 
@@ -450,13 +460,24 @@ const blackbox = {
         if (excludes.some(p => message.includes(p))) return;
       }
 
-      // Dedup: skip if same error recorded within 150ms
-      // (prevents double-count from window.onerror + React's console.error re-throw)
+      // Cross-channel dedup with firedAs tracking (200ms window).
+      // When the same error fires via console.error, window.onerror, and
+      // unhandled_promise, record ONE row and track which channels it hit.
       const now = Date.now();
       const norm = (message || '').replace(/^Uncaught\s+\w+:\s*/, '').slice(0, 100);
-      _recentErrors = _recentErrors.filter(r => now - r.t < 150);
-      if (_recentErrors.some(r => r.m === norm)) return;
-      _recentErrors.push({ m: norm, t: now });
+      _recentErrors = _recentErrors.filter(r => now - r.t < 200);
+      const existingRecent = _recentErrors.find(r => r.m === norm);
+      if (existingRecent) {
+        if (existingRecent.entry && source) {
+          existingRecent.entry.firedAs = existingRecent.entry.firedAs || [existingRecent.entry.source];
+          if (!existingRecent.entry.firedAs.includes(source)) {
+            existingRecent.entry.firedAs.push(source);
+          }
+        }
+        return;
+      }
+      const recentSlot = { m: norm, t: now, entry: null };
+      _recentErrors.push(recentSlot);
 
       // Error storm detection: collapse rapid-fire identical errors in-memory
       const storm = _errorStorms.get(norm);
@@ -480,13 +501,22 @@ const blackbox = {
         message = message.split(/\nImport trace/)[0].trim();
       }
 
-      // Extract Firestore index creation URL from "requires an index" errors
+      // Extract Firestore index creation URL from "requires an index" errors.
+      // Distinguish transient (still-building) from missing — both surface as
+      // failed-precondition, but the fix is different: wait vs deploy.
       if (message && message.includes('requires an index')) {
         try {
           const indexUrlMatch = message.match(/https:\/\/console\.firebase\.google\.com[^\s"')]+/);
-          if (indexUrlMatch) {
-            context = { ...context, action_url: indexUrlMatch[0], action_hint: 'Create the missing Firestore index' };
-          }
+          const isBuilding = /currently building|cannot be used yet|is not yet usable/i.test(message);
+          const hint = isBuilding
+            ? 'Index is still building — wait 1–5 minutes and retry'
+            : 'Create the missing Firestore index';
+          context = {
+            ...context,
+            ...(indexUrlMatch ? { action_url: indexUrlMatch[0] } : {}),
+            action_hint: hint,
+            ...(isBuilding ? { transient: true } : {})
+          };
         } catch { /* ignore */ }
       }
 
@@ -505,6 +535,7 @@ const blackbox = {
         message: truncatedMessage,
         stack: stack || '',
         source,
+        firedAs: source ? [source] : [],
         path: _getCurrentPath(),
         url: _stripQueryParams(window.location.href),
         breadcrumbs: _breadcrumbs ? _breadcrumbs.snapshot() : [],
@@ -524,6 +555,9 @@ const blackbox = {
 
       _errors.push(entry);
       if (_errors.length > 50) _errors.shift();
+
+      // Link the recent-dedup slot so cross-channel fires append to firedAs
+      recentSlot.entry = entry;
 
       // Link storm tracker to this entry so future hits update it
       const stormEntry = _errorStorms.get(norm);
@@ -604,39 +638,45 @@ const blackbox = {
           // Also check persisted history: errors from prior sessions matching this action
           // (lightweight check against in-memory error buffer only)
 
+          // Track the raw click internally for "user stuck" detection, but do
+          // NOT surface single silences — they were false-positive ~100% of the
+          // time (modals, state toggles, slow async all look silent).
+          // Only surface when we see 3+ similar clicks within 15s (rage-click).
           const silence = {
             type: 'suspicious_silence',
             action: 'click_without_followup',
             clickedElement: clickDetails,
             waitedMs: _config.silenceDetectionDelay,
-            ...(relatedError ? { relatedError } : {})
+            ...(relatedError ? { relatedError } : {}),
+            _timestamp: clickTime
           };
 
-          // Repeated silence grouping: detect "user is stuck" pattern
           const recentSilences = _suspiciousSilences.filter(s => {
             const sTime = s._timestamp || 0;
-            return (clickTime - sTime) < 15000; // within 15 seconds
+            return (clickTime - sTime) < 15000;
           });
-          const isSameAction = recentSilences.some(s =>
+          const relatedSilenceCount = recentSilences.filter(s =>
             s.clickedElement?.tag === clickDetails.tag &&
             (s.clickedElement?.text === clickDetails.text || s.clickedElement?.dataBb === clickDetails.dataBb)
-          );
-          const relatedSilenceCount = recentSilences.filter(s =>
-            s.clickedElement?.tag === clickDetails.tag
           ).length;
 
-          if (relatedSilenceCount >= 2) {
-            // 3rd+ silence on similar elements within 15s — mark as "user stuck"
-            silence.action = 'user_stuck';
-            silence.relatedSilenceCount = relatedSilenceCount + 1;
-          } else if (isSameAction) {
-            silence.action = 'repeated_silence';
-          }
-
-          silence._timestamp = clickTime;
+          // Always track internally so the next one can count
           _suspiciousSilences.push(silence);
           if (_suspiciousSilences.length > 20) _suspiciousSilences.shift();
-          blackbox._addBreadcrumb('suspicious_silence', silence);
+
+          // Only surface "user stuck" (3+ same-element silences in 15s) OR
+          // silences that correlate with an error that fired nearby — those
+          // are the signal. Everything else is noise.
+          const isUserStuck = relatedSilenceCount >= 2;
+          const hasRelatedError = !!relatedError;
+          if (isUserStuck || hasRelatedError) {
+            if (isUserStuck) {
+              silence.action = 'user_stuck';
+              silence.relatedSilenceCount = relatedSilenceCount + 1;
+            }
+            silence._surfaced = true;
+            blackbox._addBreadcrumb('suspicious_silence', silence);
+          }
         }
       } catch { /* ignore */ }
       // Clean up: remove this timer ID from the list

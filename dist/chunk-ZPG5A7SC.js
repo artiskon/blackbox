@@ -35,7 +35,7 @@ var __objRest = (source, exclude) => {
 var UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 var NUMERIC_ID_RE = /\/\d+(?=\/|$)/g;
 var HASH_SEGMENT_RE = /\/[a-zA-Z0-9]{15,}(?=\/|$)/g;
-var SKIP_FRAMES_RE = /node_modules|webpack|blackbox|__webpack|hot-update|\(native\)|<anonymous>/i;
+var SKIP_FRAMES_RE = /node_modules|webpack|blackbox|__webpack|hot-update|\(native\)|<anonymous>|bbHandleError|console\.wrapped|at wrapped \(|consoleHook|errorHook|networkHook/i;
 var FIRESTORE_DOC_PATH_RE = /\b([a-zA-Z_][a-zA-Z0-9_-]*)\/([\w]{16,28})\b/g;
 var ISO_TIMESTAMP_RE = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[.\dZ+-]*/g;
 var CHUNK_FILENAME_RE = /chunk-[a-zA-Z0-9]{6,}\.(m?js)/g;
@@ -357,7 +357,7 @@ async function _doWrite(errorEntry) {
         return;
       }
     }
-    let doc = __spreadValues({
+    let doc = __spreadValues(__spreadProps(__spreadValues({
       schemaVersion: _config.schemaVersion,
       fingerprint,
       groupingInputs,
@@ -366,7 +366,8 @@ async function _doWrite(errorEntry) {
       type: "error",
       message: errorEntry.message,
       stack: errorEntry.stack || "",
-      source: errorEntry.source,
+      source: errorEntry.source
+    }, errorEntry.firedAs && errorEntry.firedAs.length > 1 ? { firedAs: errorEntry.firedAs } : {}), {
       url: errorEntry.url,
       path: errorEntry.path,
       breadcrumbs: errorEntry.breadcrumbs || [],
@@ -376,7 +377,7 @@ async function _doWrite(errorEntry) {
       firstSeen: fns.serverTimestamp(),
       lastSeen: fns.serverTimestamp(),
       createdAt: fns.serverTimestamp()
-    }, errorEntry._storm ? { storm: { count: errorEntry._storm.count, windowMs: errorEntry._storm.windowMs } } : {});
+    }), errorEntry._storm ? { storm: { count: errorEntry._storm.count, windowMs: errorEntry._storm.windowMs } } : {});
     doc = trimDocument(doc, _config.maxDocumentBytes);
     try {
       const docRef = await fns.addDoc(_collectionRef, doc);

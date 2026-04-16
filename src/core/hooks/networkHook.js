@@ -19,10 +19,16 @@ export function installNetworkHook(blackbox) {
 
       const method = (init.method || 'GET').toUpperCase();
       let url = '';
+      let isSameOrigin = false;
       try {
         url = typeof input === 'string' ? input : input?.url || String(input);
         url = blackbox._stripQueryParams(url);
         if (url.length > config.maxUrlLength) url = url.slice(0, config.maxUrlLength);
+        // Same-origin if relative or matches current origin. Used to gate
+        // request-body capture (external hosts may carry API keys).
+        if (typeof location !== 'undefined') {
+          isSameOrigin = !url.startsWith('http') || url.startsWith(location.origin);
+        }
       } catch { /* ignore */ }
 
       // Skip tracking for excluded URLs (Firestore internal, HMR, etc.)
@@ -102,10 +108,22 @@ export function installNetworkHook(blackbox) {
 
         const crumbData = { method, url, status, duration, ok };
 
-        if (config.captureRequestBodies && config.maxBodyLength > 0) {
+        // Capture request body on same-origin POST/PUT/PATCH requests so the
+        // breadcrumb trail shows WHAT was sent — critical for diagnosing
+        // "wrong-branch" bugs where a request returns 200 but with missing
+        // params (e.g. missing projectId in an AI chat call). External hosts
+        // are skipped to avoid leaking API keys.
+        const bodyLimit = config.maxBodyLength > 0 ? config.maxBodyLength : 300;
+        const shouldCaptureReqBody =
+          config.captureRequestBodies ||
+          (isSameOrigin && ['POST', 'PUT', 'PATCH'].includes(method));
+        if (shouldCaptureReqBody) {
           try {
             if (init.body) {
-              crumbData.requestBody = String(init.body).slice(0, config.maxBodyLength);
+              const bodyStr = typeof init.body === 'string' ? init.body
+                : init.body instanceof FormData ? '[FormData: ' + [...init.body.keys()].join(', ') + ']'
+                : String(init.body);
+              crumbData.requestBody = bodyStr.slice(0, bodyLimit);
             }
           } catch { /* ignore */ }
         }
