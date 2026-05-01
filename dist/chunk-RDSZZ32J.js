@@ -22,8 +22,10 @@ function timeAgo(isoString) {
 function sourceColor(source) {
   if (!source) return "#ef4444";
   if (source === "network") return "#f59e0b";
-  if (source === "firebase") return "#3b82f6";
+  if (source === "firebase" || source === "firebase_listener") return "#3b82f6";
+  if (source === "storage") return "#0ea5e9";
   if (source === "console.error") return "#8b5cf6";
+  if (source === "resource_load") return "#f97316";
   return "#ef4444";
 }
 function verdictColor(verdict) {
@@ -305,7 +307,7 @@ function BlackBoxPanel() {
     });
     const report = stripNulls({
       _type: "BlackBox Diagnostic Report",
-      _version: "1.8.0",
+      _version: "1.8.1",
       _generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
       _instructions: "Errors are deduplicated (count = occurrences). Breadcrumbs are the single chronological trail of user actions for the session. Silences are buttons clicked with no followup (possible broken UI). History contains persisted errors from Firestore (grouped by fingerprint). Health is a 24h summary. Errors with internal:true had a stack of only framework frames \u2014 they are usually framework warnings, not app bugs. urlReachability on resource_load tells you DNS vs CORS vs HTTP failure at a glance.",
       session: stripNulls({

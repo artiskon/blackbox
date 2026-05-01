@@ -191,3 +191,8 @@ export interface BlackBox {
 
 declare const blackbox: BlackBox;
 export default blackbox;
+
+// ---- Re-exports ----
+
+export { bbFirestoreOp, bbTrackAuth, bbOnSnapshot } from './firebase.js';
+export { bbR2Fetch } from './storage.js';

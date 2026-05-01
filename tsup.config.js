@@ -5,6 +5,7 @@ export default defineConfig({
     'index': 'src/index.js',
     'components/index': 'src/components/index.js',
     'firebase': 'src/core/hooks/firebaseHook.js',
+    'storage': 'src/core/hooks/storageHook.js',
   },
   format: ['esm'],
   splitting: true,
@@ -23,6 +24,7 @@ export default defineConfig({
     await copyFile('src/index.d.ts', 'dist/index.d.ts');
     await copyFile('src/components/index.d.ts', 'dist/components/index.d.ts');
     await copyFile('src/firebase.d.ts', 'dist/firebase.d.ts');
+    await copyFile('src/storage.d.ts', 'dist/storage.d.ts');
     console.log('Copied .d.ts files to dist/');
   },
 });

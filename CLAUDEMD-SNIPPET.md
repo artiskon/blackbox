@@ -1,5 +1,9 @@
 ## BlackBox v1.8.0 — Dev-Time Error Monitoring
 
+### What's new in v1.8.1:
+- **`bbR2Fetch(url, init, { description, bucket, key })`** new helper at `@artiskon/blackbox/storage`: wraps a fetch against Cloudflare R2 (or any object storage) and tags breadcrumbs/errors with `source: 'storage'`. Filter with `bb-check --source=storage`. Uses native fetch internally so the network hook doesn't double-record.
+- Removed the legacy Firebase Studio (`.idx/dev.nix`) projectId-detection step in the CLI — env vars and `.firebaserc` cover the same ground.
+
 ### What's new in v1.8.0:
 - **Framework-internal error suppression**: errors with stacks 100% inside react-dom / next/dist / pdfjs / webpack-internal are flagged `internal: true` and hidden by default in panel and bb-check (use `--include-internal` to show)
 - **`urlReachability` on resource_load**: every failed image/script/link is classified as `ok`, `http_error`, `cors_blocked`, `unreachable_origin`, or `unknown` — distinguishes DNS-dead from CORS-blocked instantly

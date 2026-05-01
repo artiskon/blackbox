@@ -1,6 +1,6 @@
 {
   "name": "@artiskon/blackbox",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "description": "Dev-time error monitoring and activity recording for React/Firebase apps. Built for AI-assisted debugging.",
   "type": "module",
   "main": "dist/index.js",
@@ -17,6 +17,10 @@
     "./firebase": {
       "types": "./dist/firebase.d.ts",
       "import": "./dist/firebase.js"
+    },
+    "./storage": {
+      "types": "./dist/storage.d.ts",
+      "import": "./dist/storage.js"
     }
   },
   "bin": {

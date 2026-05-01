@@ -68,14 +68,7 @@ function detectProjectId() {
     }
   } catch { /* skip */ }
 
-  // 5. .idx/dev.nix (Firebase Studio)
-  try {
-    const nix = fs.readFileSync(path.join(root, '.idx', 'dev.nix'), 'utf8');
-    const match = nix.match(/projectId\s*=\s*"([^"]+)"/);
-    if (match) return match[1];
-  } catch { /* not found */ }
-
-  // 6. Environment variables
+  // 5. Environment variables
   const envVars = [
     'VITE_FIREBASE_PROJECT_ID',
     'NEXT_PUBLIC_FIREBASE_PROJECT_ID',
