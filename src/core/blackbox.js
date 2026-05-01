@@ -1,6 +1,6 @@
 import { DEFAULTS } from './constants.js';
 import { generateSessionId } from './session.js';
-import { generateFingerprint } from './fingerprint.js';
+import { generateFingerprint, isStackEntirelyInternal } from './fingerprint.js';
 import { BreadcrumbManager } from './breadcrumbs.js';
 import { installErrorHook } from './hooks/errorHook.js';
 import { installClickHook } from './hooks/clickHook.js';
@@ -104,6 +104,26 @@ const blackbox = {
     }
 
     _config = { ...DEFAULTS, ...options };
+
+    // Auto-detect build SHA and NODE_ENV from common host env vars when the
+    // app didn't pass them explicitly. Saves the user from threading a
+    // value through init() in the most common cases (Next/Vercel/Netlify/
+    // GitHub Actions). Custom values from options.* always win.
+    try {
+      if (!_config.buildSha && typeof process !== 'undefined' && process.env) {
+        _config.buildSha =
+          process.env.NEXT_PUBLIC_BUILD_SHA ||
+          process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA ||
+          process.env.VERCEL_GIT_COMMIT_SHA ||
+          process.env.NETLIFY_COMMIT_REF ||
+          process.env.GITHUB_SHA ||
+          null;
+      }
+      if (!_config.nodeEnv && typeof process !== 'undefined' && process.env) {
+        _config.nodeEnv = process.env.NODE_ENV || null;
+      }
+    } catch { /* process not available */ }
+
     _sessionId = generateSessionId();
 
     // Recover breadcrumbs from previous session saved on unload
@@ -530,6 +550,11 @@ const blackbox = {
       // Generate fingerprint for in-memory correlation (silence ↔ error linking)
       const { fingerprint: _fp } = generateFingerprint(truncatedMessage, source, _getCurrentPath(), stack);
 
+      // Detect framework-only errors so the panel and CLI can hide them by
+      // default — they're almost always BB capturing a framework warning
+      // about itself, not an app bug the developer can fix.
+      const _internal = isStackEntirelyInternal(stack);
+
       const entry = {
         _fingerprint: _fp,
         message: truncatedMessage,
@@ -540,11 +565,14 @@ const blackbox = {
         url: _stripQueryParams(window.location.href),
         breadcrumbs: _breadcrumbs ? _breadcrumbs.snapshot() : [],
         context,
+        internal: _internal || undefined,
         metadata: {
           userAgent: navigator.userAgent,
           viewport: `${window.innerWidth}x${window.innerHeight}`,
           timestamp: new Date().toISOString(),
-          language: navigator.language
+          language: navigator.language,
+          ...(_config.buildSha ? { buildSha: _config.buildSha } : {}),
+          ...(_config.nodeEnv ? { nodeEnv: _config.nodeEnv } : {})
         },
         sessionId: _sessionId,
         schemaVersion: _config.schemaVersion,

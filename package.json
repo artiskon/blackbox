@@ -1,6 +1,6 @@
 {
   "name": "@artiskon/blackbox",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "description": "Dev-time error monitoring and activity recording for React/Firebase apps. Built for AI-assisted debugging.",
   "type": "module",
   "main": "dist/index.js",
@@ -23,7 +23,8 @@
     "bb-check": "./src/cli/bb-check.js",
     "bb-health": "./src/cli/bb-health.js",
     "bb-timeline": "./src/cli/bb-timeline.js",
-    "bb-clear": "./src/cli/bb-clear.js"
+    "bb-clear": "./src/cli/bb-clear.js",
+    "bb-ack": "./src/cli/bb-ack.js"
   },
   "scripts": {
     "build": "tsup"

@@ -36,6 +36,7 @@ var UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 var NUMERIC_ID_RE = /\/\d+(?=\/|$)/g;
 var HASH_SEGMENT_RE = /\/[a-zA-Z0-9]{15,}(?=\/|$)/g;
 var SKIP_FRAMES_RE = /node_modules|webpack|blackbox|__webpack|hot-update|\(native\)|<anonymous>|bbHandleError|console\.wrapped|at wrapped \(|consoleHook|errorHook|networkHook/i;
+var INTERNAL_ONLY_FRAMES_RE = /react-dom[-_/]|react\/cjs\/|next\/dist\/|next\/router|next-server|webpack-internal|__webpack_require__|pdfjs-dist\/|firebase\/|@firebase\/|@grpc\/|grpc-web|hot-update|chunk-[a-zA-Z0-9]+\.(m?js)|node_modules_.*\._\.(m?js)|<anonymous>|\(native\)/i;
 var FIRESTORE_DOC_PATH_RE = /\b([a-zA-Z_][a-zA-Z0-9_-]*)\/([\w]{16,28})\b/g;
 var ISO_TIMESTAMP_RE = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[.\dZ+-]*/g;
 var CHUNK_FILENAME_RE = /chunk-[a-zA-Z0-9]{6,}\.(m?js)/g;
@@ -63,12 +64,14 @@ function normalizePath(path) {
   normalized = normalized.replace(HASH_SEGMENT_RE, "/:hash");
   return normalized;
 }
+var CDN_CGI_PREFIX_RE = /^\/cdn-cgi\/(?:image|imagedelivery)\/[^/]+/;
 function normalizeMessageUrls(message) {
   if (!message) return message;
   return message.replace(/https?:\/\/[^\s"']+/g, (url) => {
     try {
       const u = new URL(url);
       let path = u.pathname;
+      path = path.replace(CDN_CGI_PREFIX_RE, "");
       path = path.replace(UUID_RE, ":id");
       path = path.replace(NUMERIC_ID_RE, "/:num");
       path = path.replace(HASH_SEGMENT_RE, "/:hash");
@@ -126,6 +129,20 @@ function hashString(str) {
   }
   return result;
 }
+function isStackEntirelyInternal(stack) {
+  if (!stack) return false;
+  const lines = stack.split("\n");
+  let frameCount = 0;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || !trimmed.includes("at ")) continue;
+    frameCount++;
+    if (!INTERNAL_ONLY_FRAMES_RE.test(trimmed)) {
+      return false;
+    }
+  }
+  return frameCount >= 2;
+}
 function generateFingerprint(message, source, path, stack) {
   const truncatedMessage = normalizeMessage(message);
   const normalizedPath = normalizePath(path);
@@ -181,6 +198,14 @@ async function getFirestoreFns() {
     console.warn("[BlackBox] Failed to load firebase/firestore:", e);
     return null;
   }
+}
+var MAX_TRACKED_USERS = 50;
+function userKeyFor(errorEntry) {
+  var _a;
+  const uid = (_a = errorEntry == null ? void 0 : errorEntry.user) == null ? void 0 : _a.id;
+  if (uid) return String(uid).slice(0, 64);
+  if (errorEntry == null ? void 0 : errorEntry.sessionId) return `anon:${String(errorEntry.sessionId).slice(0, 16)}`;
+  return null;
 }
 function estimateDocBytes(doc) {
   try {
@@ -311,6 +336,14 @@ async function _doWrite(errorEntry) {
           lastSeenSessionId: errorEntry.sessionId,
           breadcrumbs: errorEntry.breadcrumbs || []
         };
+        const userKey2 = userKeyFor(errorEntry);
+        if (userKey2) {
+          const tracked = Array.isArray(currentData == null ? void 0 : currentData.uniqueUsers) ? currentData.uniqueUsers : [];
+          if (!tracked.includes(userKey2) && tracked.length < MAX_TRACKED_USERS) {
+            updateData.uniqueUsers = [...tracked, userKey2];
+            updateData.uniqueUserCount = ((currentData == null ? void 0 : currentData.uniqueUserCount) || tracked.length) + 1;
+          }
+        }
         if (errorEntry._storm) {
           updateData.storm = { count: errorEntry._storm.count, windowMs: errorEntry._storm.windowMs };
         }
@@ -345,6 +378,14 @@ async function _doWrite(errorEntry) {
           lastSeenSessionId: errorEntry.sessionId,
           breadcrumbs: errorEntry.breadcrumbs || []
         };
+        const userKey2 = userKeyFor(errorEntry);
+        if (userKey2) {
+          const tracked = Array.isArray(currentData.uniqueUsers) ? currentData.uniqueUsers : [];
+          if (!tracked.includes(userKey2) && tracked.length < MAX_TRACKED_USERS) {
+            updateData.uniqueUsers = [...tracked, userKey2];
+            updateData.uniqueUserCount = (currentData.uniqueUserCount || tracked.length) + 1;
+          }
+        }
         if (errorEntry._storm) {
           updateData.storm = { count: errorEntry._storm.count, windowMs: errorEntry._storm.windowMs };
         }
@@ -357,7 +398,8 @@ async function _doWrite(errorEntry) {
         return;
       }
     }
-    let doc = __spreadValues(__spreadProps(__spreadValues({
+    const userKey = userKeyFor(errorEntry);
+    let doc = __spreadValues(__spreadProps(__spreadValues(__spreadValues(__spreadProps(__spreadValues({
       schemaVersion: _config.schemaVersion,
       fingerprint,
       groupingInputs,
@@ -373,7 +415,8 @@ async function _doWrite(errorEntry) {
       breadcrumbs: errorEntry.breadcrumbs || [],
       context: errorEntry.context || {},
       metadata: errorEntry.metadata || {},
-      occurrences: errorEntry._storm ? errorEntry._storm.count : 1,
+      occurrences: errorEntry._storm ? errorEntry._storm.count : 1
+    }), userKey ? { uniqueUsers: [userKey], uniqueUserCount: 1 } : {}), errorEntry.internal ? { internal: true } : {}), {
       firstSeen: fns.serverTimestamp(),
       lastSeen: fns.serverTimestamp(),
       createdAt: fns.serverTimestamp()
@@ -480,6 +523,7 @@ export {
   __spreadValues,
   __spreadProps,
   __objRest,
+  isStackEntirelyInternal,
   generateFingerprint,
   initPersistence,
   isCircuitOpen,

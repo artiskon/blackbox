@@ -1,15 +1,29 @@
-## BlackBox v1.2.0 — Dev-Time Error Monitoring
+## BlackBox v1.8.0 — Dev-Time Error Monitoring
 
-### What's included in v1.2.0:
+### What's new in v1.8.0:
+- **Framework-internal error suppression**: errors with stacks 100% inside react-dom / next/dist / pdfjs / webpack-internal are flagged `internal: true` and hidden by default in panel and bb-check (use `--include-internal` to show)
+- **`urlReachability` on resource_load**: every failed image/script/link is classified as `ok`, `http_error`, `cors_blocked`, `unreachable_origin`, or `unknown` — distinguishes DNS-dead from CORS-blocked instantly
+- **CDN transform fingerprint collapse**: Cloudflare `cdn-cgi/image/width=400/...` and `width=600/...` variants of the same source URL now share one fingerprint
+- **Cloudflare/nginx error page detection**: HTML upstream-error responses are summarized to a single line in responseBody instead of dumping 4 KB of boilerplate HTML
+- **Firestore query context on permission errors**: `bbOnSnapshot` and `bbFirestoreOp` now auto-extract the queryPath and where-filter shape from the queryRef, so permission-denied errors include `queryPath` and `queryFilters` in context
+- **Build-aware errors**: every error doc now carries `metadata.buildSha` and `metadata.nodeEnv`; auto-detected from `NEXT_PUBLIC_BUILD_SHA`, `VERCEL_GIT_COMMIT_SHA`, `NETLIFY_COMMIT_REF`, `GITHUB_SHA`, or set via `init({ buildSha, nodeEnv })`
+- **Unique-user count**: errors track `uniqueUserCount` alongside `occurrences` so you can tell one-user bugs from everyone-bugs
+- **Stronger click auto-labels**: img alt, parent text, input placeholder/value all feed the autoLabel waterfall — no more bare `el: 'img'` breadcrumbs
+- **bb-check filter flags**: `--path=/admin/sites`, `--source=network`, `--since=1h`, `--include-internal`
+- **`bb-ack <fingerprint>`** new CLI command: mark a fingerprint acknowledged for `--for 7d` (default) with an optional `--comment`. Acked errors hide from bb-check until TTL expires. `bb-ack --list` to see what's currently muted; `--clear` to remove
+- **Silent stale cleanup**: bb-check now silently drops docs >7 days old at the start of each run, replacing the noisy "501-doc warning"
+- **Cross-route correlation**: bb-check's "Possibly related" now includes `multi_path` clusters — same fingerprint observed on 2+ pages collapses into one row
+- **sessionInfo header**: bb-check's JSON output and CLI banner show `environment`, `nodeEnv`, `buildSha` from the most recent error
+- Fixed: panel's React duplicate-key crash on same-millisecond errors with same-prefix messages
+
+### Foundation (carried from v1.x):
 - Error capture with dedup (fingerprint-based, local cache + Firestore query)
 - Breadcrumb trails: clicks, network, navigation, errors, console, forms, resources
 - Network noise filtering (Firestore/Auth/HMR auto-excluded)
-- Click auto-labeling (aria-label, title, parent button text fallback)
-- Environment, tags, user context on all documents
 - Activity TTL (48h auto-expiry via Firestore `expireAt` field)
 - Flush on page unload + recovery on next init
 - Panel: fullscreen mode, search, copy JSON/Markdown, collapsible stack traces, breadcrumb filter chips
-- CLI: bb:check (grouped by fingerprint), bb:health, bb:timeline, bb:clear (1-day default)
+- CLI: bb-check, bb-health, bb-timeline, bb-clear, **bb-ack**
 
 ### Debugging Workflow (ALWAYS follow this)
 
@@ -32,6 +46,8 @@
 - `db` — Firestore instance (required for persistence)
 - `enabled` — boolean, forces BB on even in production builds (default: auto based on NODE_ENV)
 - `environment` — string tag on every document (e.g. 'development', 'staging')
+- `buildSha` — string, identifies the deploy. Auto-detected from `NEXT_PUBLIC_BUILD_SHA` / `VERCEL_GIT_COMMIT_SHA` / `NETLIFY_COMMIT_REF` / `GITHUB_SHA` if not set
+- `nodeEnv` — string, override for `process.env.NODE_ENV`
 - `tags` — Record<string, string>, arbitrary metadata on every document
 - `networkExcludePatterns` — string[], URL patterns to skip in network breadcrumbs (defaults: Firestore, Auth, HMR, Next.js internals)
 - `maxBreadcrumbs` — number (default: 80)

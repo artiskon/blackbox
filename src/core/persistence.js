@@ -42,6 +42,17 @@ async function getFirestoreFns() {
   }
 }
 
+// Stable identifier for "who saw this error" — prefer real user.id when set,
+// fall back to sessionId so anonymous traffic still contributes to a unique
+// count. Capped on read so doc size stays bounded.
+const MAX_TRACKED_USERS = 50;
+function userKeyFor(errorEntry) {
+  const uid = errorEntry?.user?.id;
+  if (uid) return String(uid).slice(0, 64);
+  if (errorEntry?.sessionId) return `anon:${String(errorEntry.sessionId).slice(0, 16)}`;
+  return null;
+}
+
 function estimateDocBytes(doc) {
   try {
     return new TextEncoder().encode(JSON.stringify(doc)).length;
@@ -202,6 +213,14 @@ async function _doWrite(errorEntry) {
           lastSeenSessionId: errorEntry.sessionId,
           breadcrumbs: errorEntry.breadcrumbs || []
         };
+        const userKey = userKeyFor(errorEntry);
+        if (userKey) {
+          const tracked = Array.isArray(currentData?.uniqueUsers) ? currentData.uniqueUsers : [];
+          if (!tracked.includes(userKey) && tracked.length < MAX_TRACKED_USERS) {
+            updateData.uniqueUsers = [...tracked, userKey];
+            updateData.uniqueUserCount = (currentData?.uniqueUserCount || tracked.length) + 1;
+          }
+        }
         if (errorEntry._storm) {
           updateData.storm = { count: errorEntry._storm.count, windowMs: errorEntry._storm.windowMs };
         }
@@ -240,6 +259,14 @@ async function _doWrite(errorEntry) {
           lastSeenSessionId: errorEntry.sessionId,
           breadcrumbs: errorEntry.breadcrumbs || []
         };
+        const userKey = userKeyFor(errorEntry);
+        if (userKey) {
+          const tracked = Array.isArray(currentData.uniqueUsers) ? currentData.uniqueUsers : [];
+          if (!tracked.includes(userKey) && tracked.length < MAX_TRACKED_USERS) {
+            updateData.uniqueUsers = [...tracked, userKey];
+            updateData.uniqueUserCount = (currentData.uniqueUserCount || tracked.length) + 1;
+          }
+        }
         if (errorEntry._storm) {
           updateData.storm = { count: errorEntry._storm.count, windowMs: errorEntry._storm.windowMs };
         }
@@ -254,6 +281,7 @@ async function _doWrite(errorEntry) {
     }
 
     // Create new document
+    const userKey = userKeyFor(errorEntry);
     let doc = {
       schemaVersion: _config.schemaVersion,
       fingerprint,
@@ -271,6 +299,8 @@ async function _doWrite(errorEntry) {
       context: errorEntry.context || {},
       metadata: errorEntry.metadata || {},
       occurrences: errorEntry._storm ? errorEntry._storm.count : 1,
+      ...(userKey ? { uniqueUsers: [userKey], uniqueUserCount: 1 } : {}),
+      ...(errorEntry.internal ? { internal: true } : {}),
       firstSeen: fns.serverTimestamp(),
       lastSeen: fns.serverTimestamp(),
       createdAt: fns.serverTimestamp(),

@@ -1,11 +1,11 @@
 'use client';
 import {
   blackbox_default
-} from "./chunk-ALKMRIDV.js";
+} from "./chunk-WCMKI43W.js";
 import {
   __spreadProps,
   __spreadValues
-} from "./chunk-ZPG5A7SC.js";
+} from "./chunk-7MPHHMMU.js";
 
 // src/components/BlackBoxPanel.js
 import { useState, useEffect, useCallback } from "react";
@@ -165,6 +165,7 @@ function BlackBoxPanel() {
   const [reportEmpty, setReportEmpty] = useState(false);
   const [reportText, setReportText] = useState(null);
   const [copiedErrorKey, setCopiedErrorKey] = useState(null);
+  const [showInternal, setShowInternal] = useState(false);
   const isConnected = blackbox_default.isConnectedToFirestore();
   async function copyFullReport() {
     var _a, _b, _c, _d;
@@ -304,13 +305,15 @@ function BlackBoxPanel() {
     });
     const report = stripNulls({
       _type: "BlackBox Diagnostic Report",
-      _version: "1.7.0",
+      _version: "1.8.0",
       _generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      _instructions: "Errors are deduplicated (count = occurrences). Breadcrumbs are the single chronological trail of user actions for the session. Silences are buttons clicked with no followup (possible broken UI). History contains persisted errors from Firestore (grouped by fingerprint). Health is a 24h summary.",
+      _instructions: "Errors are deduplicated (count = occurrences). Breadcrumbs are the single chronological trail of user actions for the session. Silences are buttons clicked with no followup (possible broken UI). History contains persisted errors from Firestore (grouped by fingerprint). Health is a 24h summary. Errors with internal:true had a stack of only framework frames \u2014 they are usually framework warnings, not app bugs. urlReachability on resource_load tells you DNS vs CORS vs HTTP failure at a glance.",
       session: stripNulls({
         id: blackbox_default.getSessionId(),
         errorCount,
         environment: config.environment,
+        nodeEnv: config.nodeEnv,
+        buildSha: config.buildSha,
         tags: config.tags,
         user: config.user,
         firestoreConnected: isConnected
@@ -620,8 +623,13 @@ function BlackBoxPanel() {
       ] })
     ] });
   }
-  const filteredLiveErrors = [...errors].reverse().filter(matchesSearch);
-  const filteredHistoryErrors = historyErrors.filter(matchesSearch);
+  function passesInternalFilter(err) {
+    if (showInternal) return true;
+    return !(err.internal === true || err._internal === true);
+  }
+  const filteredLiveErrors = [...errors].reverse().filter(matchesSearch).filter(passesInternalFilter);
+  const filteredHistoryErrors = historyErrors.filter(matchesSearch).filter(passesInternalFilter);
+  const hiddenInternalCount = [...errors].filter((e) => e.internal === true || e._internal === true).length + historyErrors.filter((e) => e.internal === true).length;
   return /* @__PURE__ */ jsxs(Fragment, { children: [
     isExpanded && /* @__PURE__ */ jsx("div", { style: {
       position: "fixed",
@@ -680,11 +688,20 @@ function BlackBoxPanel() {
         },
         t
       )) }),
+      hiddenInternalCount > 0 && (tab === "live" || tab === "history") && /* @__PURE__ */ jsxs("div", { style: { padding: "4px 14px", fontSize: "10px", color: "#888", display: "flex", alignItems: "center", gap: "8px", borderBottom: "1px solid rgba(255,255,255,0.05)" }, children: [
+        /* @__PURE__ */ jsxs("span", { children: [
+          hiddenInternalCount,
+          " framework-internal error",
+          hiddenInternalCount !== 1 ? "s" : "",
+          " hidden"
+        ] }),
+        /* @__PURE__ */ jsx("button", { onClick: () => setShowInternal((s) => !s), style: filterChipStyle(showInternal), children: showInternal ? "Hide" : "Show" })
+      ] }),
       /* @__PURE__ */ jsxs("div", { style: { flex: 1, overflowY: "auto", minHeight: 0 }, children: [
         tab === "live" && /* @__PURE__ */ jsxs("div", { children: [
           filteredLiveErrors.length === 0 ? /* @__PURE__ */ jsx("div", { style: { padding: "24px 14px", textAlign: "center", color: "#22c55e" }, children: errors.length === 0 ? "No errors captured" : "No matching errors" }) : filteredLiveErrors.map((err, i) => {
             var _a, _b;
-            const errKey = `${err.source}:${(err.message || "").slice(0, 60)}:${((_a = err.metadata) == null ? void 0 : _a.timestamp) || i}`;
+            const errKey = `${err._fingerprint || "fp"}:${((_a = err.metadata) == null ? void 0 : _a.timestamp) || ""}:${i}`;
             const isExp = expandedError === errKey;
             return /* @__PURE__ */ jsxs("div", { children: [
               /* @__PURE__ */ jsxs("div", { onClick: () => setExpandedError(isExp ? null : errKey), style: { padding: "8px 14px", cursor: "pointer", borderBottom: "1px solid rgba(255,255,255,0.05)", background: isExp ? "rgba(255,255,255,0.05)" : "transparent" }, children: [

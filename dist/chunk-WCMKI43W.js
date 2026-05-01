@@ -9,8 +9,9 @@ import {
   getFirestoreFunctions,
   getPersistenceConfig,
   initPersistence,
-  isCircuitOpen
-} from "./chunk-ZPG5A7SC.js";
+  isCircuitOpen,
+  isStackEntirelyInternal
+} from "./chunk-7MPHHMMU.js";
 
 // src/core/constants.js
 var DEFAULTS = {
@@ -51,7 +52,12 @@ var DEFAULTS = {
   // Context tagging
   environment: null,
   tags: {},
-  user: null
+  user: null,
+  // Build / deploy provenance — auto-detected from common host env vars
+  // when not provided. Surfaces "this error came from build X / env Y"
+  // in the panel and bb-check, so devs can tell stale-vs-fresh at a glance.
+  buildSha: null,
+  nodeEnv: null
 };
 
 // src/core/session.js
@@ -148,21 +154,37 @@ function installErrorHook(blackbox2) {
 // src/core/hooks/clickHook.js
 function installClickHook(blackbox2) {
   const config = blackbox2._getConfig();
-  function getLabel(el) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
-    if ((_a = el.dataset) == null ? void 0 : _a.bb) return null;
-    const text = ((_c = (_b = el.textContent) == null ? void 0 : _b.trim()) == null ? void 0 : _c.slice(0, 100)) || "";
-    if (text.length >= 2) return null;
-    const ariaLabel = (_d = el.getAttribute) == null ? void 0 : _d.call(el, "aria-label");
-    if (ariaLabel) return ariaLabel.slice(0, 100);
-    const title = (_e = el.getAttribute) == null ? void 0 : _e.call(el, "title");
+  function synthesizeLabel(el) {
+    var _a, _b, _c, _d, _e, _f, _g;
+    if (!(el == null ? void 0 : el.getAttribute)) return null;
+    const tag = el.tagName ? el.tagName.toLowerCase() : "";
+    const aria = el.getAttribute("aria-label");
+    if (aria) return aria.slice(0, 100);
+    const title = el.getAttribute("title");
     if (title) return title.slice(0, 100);
-    const parent = (_f = el.closest) == null ? void 0 : _f.call(el, "button, a");
+    if (tag === "img") {
+      const alt = el.getAttribute("alt");
+      if (alt) return alt.slice(0, 100);
+    }
+    if (tag === "input") {
+      const placeholder = el.getAttribute("placeholder");
+      if (placeholder) return `[${placeholder.slice(0, 50)}]`;
+      const value = el.value;
+      if (value) return value.slice(0, 50);
+    }
+    const parent = (_a = el.closest) == null ? void 0 : _a.call(el, 'button, a, [role="button"]');
     if (parent && parent !== el) {
-      const parentText = (_h = (_g = parent.textContent) == null ? void 0 : _g.trim()) == null ? void 0 : _h.slice(0, 100);
+      const parentText = (_c = (_b = parent.textContent) == null ? void 0 : _b.trim()) == null ? void 0 : _c.slice(0, 100);
       if (parentText && parentText.length >= 2) return parentText;
-      const parentAria = (_i = parent.getAttribute) == null ? void 0 : _i.call(parent, "aria-label");
+      const parentAria = (_d = parent.getAttribute) == null ? void 0 : _d.call(parent, "aria-label");
       if (parentAria) return parentAria.slice(0, 100);
+      const parentTitle = (_e = parent.getAttribute) == null ? void 0 : _e.call(parent, "title");
+      if (parentTitle) return parentTitle.slice(0, 100);
+    }
+    const parentEl = el.parentElement;
+    if (parentEl) {
+      const parentText = (_g = (_f = parentEl.textContent) == null ? void 0 : _f.trim()) == null ? void 0 : _g.slice(0, 30);
+      if (parentText && parentText.length >= 2) return parentText;
     }
     return null;
   }
@@ -179,7 +201,7 @@ function installClickHook(blackbox2) {
       const dataBb = ((_f = el.dataset) == null ? void 0 : _f.bb) || null;
       let href = el.href || null;
       if (href) href = blackbox2._stripQueryParams(href);
-      const autoLabel = text.length < 2 && !dataBb ? getLabel(el) : null;
+      const autoLabel = synthesizeLabel(el);
       blackbox2._addBreadcrumb("click", { tag, text, id, className, dataBb, href, autoLabel });
       const passiveInputTypes = ["text", "number", "email", "password", "tel", "search", "url", "date", "time", "datetime-local", "month", "week", "color", "range", "file"];
       const isPassiveInput = tag === "input" && passiveInputTypes.includes(el.type || "text");
@@ -368,6 +390,33 @@ function installNetworkHook(blackbox2) {
   function isExcludedUrl(url) {
     return excludePatterns.some((pattern) => url.includes(pattern));
   }
+  function classifyHtmlErrorPage(text, status) {
+    if (!text || text.length < 200) return null;
+    const head = text.slice(0, 2e3);
+    if (!/<html/i.test(head)) return null;
+    let titleMatch = head.match(/<title[^>]*>([^<]+)<\/title>/i);
+    let title = titleMatch ? titleMatch[1].trim() : null;
+    const isCloudflare = /cf-error-details|cloudflare-static|cloudflare\.com\/5xx-error-landing|<title>\s*[^<]*\|\s*Cloudflare/i.test(head) || /Cloudflare Ray ID/i.test(text.slice(0, 8e3));
+    if (isCloudflare) {
+      return {
+        kind: "cloudflare_error_page",
+        summary: `Cloudflare ${status || ""} page${title ? ` \u2014 ${title}` : ""}`.trim()
+      };
+    }
+    if (/<center>\s*<h1>\s*\d{3}/i.test(head) && /nginx/i.test(text.slice(0, 4e3))) {
+      return {
+        kind: "nginx_error_page",
+        summary: `nginx ${status || ""} page${title ? ` \u2014 ${title}` : ""}`.trim()
+      };
+    }
+    if (status && status >= 500) {
+      return {
+        kind: "html_error_page",
+        summary: `HTML ${status} page${title ? ` \u2014 ${title}` : ""}`.trim()
+      };
+    }
+    return null;
+  }
   let _bbRecording = false;
   function createFetchWrapper(baseFetch) {
     const wrapped = async function(input, init = {}) {
@@ -472,8 +521,15 @@ function installNetworkHook(blackbox2) {
             const cloned = response.clone();
             const text = await cloned.text();
             if (text) {
-              errorContext.responseBody = text.slice(0, maxBody);
-              crumbData.responseBody = text.slice(0, 200);
+              const classified = classifyHtmlErrorPage(text, status);
+              if (classified) {
+                errorContext.responseBody = `[${classified.summary}]`;
+                errorContext.responseBodyKind = classified.kind;
+                crumbData.responseBody = `[${classified.summary}]`;
+              } else {
+                errorContext.responseBody = text.slice(0, maxBody);
+                crumbData.responseBody = text.slice(0, 200);
+              }
             }
           } catch (e) {
           }
@@ -563,6 +619,14 @@ function installFormHook(blackbox2) {
 function installResourceHook(blackbox2) {
   const resourceTags = /* @__PURE__ */ new Set(["IMG", "SCRIPT", "LINK", "VIDEO", "AUDIO", "SOURCE"]);
   const nativeFetch = blackbox2._getNativeFetch();
+  function safeHostname(src) {
+    try {
+      if (!src || !src.startsWith("http")) return null;
+      return new URL(src).hostname;
+    } catch (e) {
+      return null;
+    }
+  }
   const handler = (event) => {
     var _a, _b;
     try {
@@ -571,9 +635,11 @@ function installResourceHook(blackbox2) {
       if (!resourceTags.has(target.tagName)) return;
       const tagName = target.tagName.toLowerCase();
       const src = blackbox2._stripQueryParams(target.src || target.href || "");
+      const hostname = safeHostname(src);
       const context = {
         tagName,
         src,
+        hostname,
         id: target.id || null,
         className: (((_a = target.className) == null ? void 0 : _a.toString()) || "").slice(0, 100)
       };
@@ -589,27 +655,45 @@ function installResourceHook(blackbox2) {
         }
         el = el.parentElement;
       }
-      if (src && src.startsWith("http") && nativeFetch) {
-        nativeFetch(src, { method: "HEAD", mode: "cors" }).then((res) => {
-          context.httpStatus = res.status;
-          blackbox2._recordError({ message: `Resource failed to load: ${tagName} - ${src}`, stack: "", source: "resource_load", context });
-        }).catch(() => {
-          nativeFetch(src, { method: "HEAD", mode: "no-cors" }).then(() => {
-            context.statusHint = "cors_blocked";
-            blackbox2._recordError({ message: `Resource failed to load: ${tagName} - ${src}`, stack: "", source: "resource_load", context });
-          }).catch(() => {
-            context.httpStatus = 0;
-            context.statusHint = "unreachable";
-            blackbox2._recordError({ message: `Resource failed to load: ${tagName} - ${src}`, stack: "", source: "resource_load", context });
-          });
-        });
-      } else {
+      try {
+        if (tagName === "img") {
+          const alt = target.getAttribute("alt");
+          if (alt) context.alt = alt.slice(0, 100);
+        }
+      } catch (e) {
+      }
+      const emit = (reachability, extra) => {
+        context.urlReachability = reachability;
+        if (extra) Object.assign(context, extra);
         blackbox2._recordError({
           message: `Resource failed to load: ${tagName} - ${src}`,
           stack: "",
           source: "resource_load",
           context
         });
+      };
+      if (src && src.startsWith("http") && nativeFetch) {
+        nativeFetch(src, { method: "HEAD", mode: "cors" }).then((res) => {
+          if (res.status >= 200 && res.status < 400) {
+            emit("ok", { httpStatus: res.status });
+          } else {
+            emit("http_error", { httpStatus: res.status });
+          }
+        }).catch(() => {
+          nativeFetch(src, { method: "HEAD", mode: "no-cors" }).then(() => {
+            emit("cors_blocked", { httpStatus: 0 });
+          }).catch(() => {
+            emit("unreachable_origin", {
+              httpStatus: 0,
+              // Best-effort hint so users don't have to re-read the field
+              // pair to know what to do. "unreachable_origin" is the strong
+              // signal that the hostname doesn't resolve.
+              statusHint: "origin_dns_or_refused"
+            });
+          });
+        });
+      } else {
+        emit("unknown");
       }
     } catch (e) {
     }
@@ -779,6 +863,15 @@ var blackbox = {
       console.error("[BlackBox] init() `db` must be a Firestore instance. Got:", typeof options.db);
     }
     _config = __spreadValues(__spreadValues({}, DEFAULTS), options);
+    try {
+      if (!_config.buildSha && typeof process !== "undefined" && process.env) {
+        _config.buildSha = process.env.NEXT_PUBLIC_BUILD_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || process.env.VERCEL_GIT_COMMIT_SHA || process.env.NETLIFY_COMMIT_REF || process.env.GITHUB_SHA || null;
+      }
+      if (!_config.nodeEnv && typeof process !== "undefined" && process.env) {
+        _config.nodeEnv = process.env.NODE_ENV || null;
+      }
+    } catch (e) {
+    }
     _sessionId = generateSessionId();
     let _pendingRecovery = null;
     try {
@@ -938,7 +1031,7 @@ var blackbox = {
   // --- Firestore query methods for the UI panel ---
   async queryPersistedErrors(limit = 50) {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-FT7VBGG4.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-CU5NAUZI.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { errors: [], connected: false };
@@ -977,7 +1070,7 @@ var blackbox = {
   },
   async queryHealth() {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-FT7VBGG4.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-CU5NAUZI.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { connected: false };
@@ -1015,7 +1108,7 @@ var blackbox = {
   },
   async queryTimeline(minutes = 5) {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-FT7VBGG4.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-CU5NAUZI.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { events: [], connected: false };
@@ -1044,7 +1137,7 @@ var blackbox = {
   },
   async clearPersistedErrors() {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-FT7VBGG4.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-CU5NAUZI.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref || !fns.deleteDoc) return { success: false, error: "Not connected to Firestore" };
@@ -1136,6 +1229,7 @@ var blackbox = {
       _errorCount++;
       const truncatedMessage = message ? message.slice(0, _config.maxMessageLength) : "";
       const { fingerprint: _fp } = generateFingerprint(truncatedMessage, source, _getCurrentPath(), stack);
+      const _internal = isStackEntirelyInternal(stack);
       const entry = {
         _fingerprint: _fp,
         message: truncatedMessage,
@@ -1146,12 +1240,13 @@ var blackbox = {
         url: _stripQueryParams(window.location.href),
         breadcrumbs: _breadcrumbs ? _breadcrumbs.snapshot() : [],
         context,
-        metadata: {
+        internal: _internal || void 0,
+        metadata: __spreadValues(__spreadValues({
           userAgent: navigator.userAgent,
           viewport: `${window.innerWidth}x${window.innerHeight}`,
           timestamp: (/* @__PURE__ */ new Date()).toISOString(),
           language: navigator.language
-        },
+        }, _config.buildSha ? { buildSha: _config.buildSha } : {}), _config.nodeEnv ? { nodeEnv: _config.nodeEnv } : {}),
         sessionId: _sessionId,
         schemaVersion: _config.schemaVersion,
         environment: _config.environment || null,

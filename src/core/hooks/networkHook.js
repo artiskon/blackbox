@@ -7,6 +7,50 @@ export function installNetworkHook(blackbox) {
     return excludePatterns.some(pattern => url.includes(pattern));
   }
 
+  // Recognize generic upstream error pages so we don't shove 4 KB of
+  // boilerplate HTML into the report. Returns either null (keep body
+  // verbatim) or a structured replacement: {summary, kind} that the
+  // network hook substitutes for responseBody. Cloudflare and nginx error
+  // pages were the most actionable to detect — both leak a helpful one-line
+  // status in <title> that beats the surrounding 4 KB of cruft.
+  function classifyHtmlErrorPage(text, status) {
+    if (!text || text.length < 200) return null;
+    const head = text.slice(0, 2000);
+    if (!/<html/i.test(head)) return null;
+
+    let titleMatch = head.match(/<title[^>]*>([^<]+)<\/title>/i);
+    let title = titleMatch ? titleMatch[1].trim() : null;
+
+    // Cloudflare-styled error page signals: "Cloudflare" branding, a
+    // cf-error-* class, or the ray-id at the bottom. Any one is enough.
+    const isCloudflare =
+      /cf-error-details|cloudflare-static|cloudflare\.com\/5xx-error-landing|<title>\s*[^<]*\|\s*Cloudflare/i.test(head) ||
+      /Cloudflare Ray ID/i.test(text.slice(0, 8000));
+    if (isCloudflare) {
+      return {
+        kind: 'cloudflare_error_page',
+        summary: `Cloudflare ${status || ''} page${title ? ` — ${title}` : ''}`.trim()
+      };
+    }
+
+    if (/<center>\s*<h1>\s*\d{3}/i.test(head) && /nginx/i.test(text.slice(0, 4000))) {
+      return {
+        kind: 'nginx_error_page',
+        summary: `nginx ${status || ''} page${title ? ` — ${title}` : ''}`.trim()
+      };
+    }
+
+    // Generic HTML upstream error — still worth collapsing so the report
+    // shows "[HTML upstream error: <title>]" instead of <!DOCTYPE html>...
+    if (status && status >= 500) {
+      return {
+        kind: 'html_error_page',
+        summary: `HTML ${status} page${title ? ` — ${title}` : ''}`.trim()
+      };
+    }
+    return null;
+  }
+
   // Prevent double-recording when wrapper chain grows from HMR re-patching
   let _bbRecording = false;
 
@@ -145,8 +189,17 @@ export function installNetworkHook(blackbox) {
             const cloned = response.clone();
             const text = await cloned.text();
             if (text) {
-              errorContext.responseBody = text.slice(0, maxBody);
-              crumbData.responseBody = text.slice(0, 200);
+              const classified = classifyHtmlErrorPage(text, status);
+              if (classified) {
+                // Replace the HTML dump with a one-liner so the report
+                // doesn't bury the actual signal under boilerplate.
+                errorContext.responseBody = `[${classified.summary}]`;
+                errorContext.responseBodyKind = classified.kind;
+                crumbData.responseBody = `[${classified.summary}]`;
+              } else {
+                errorContext.responseBody = text.slice(0, maxBody);
+                crumbData.responseBody = text.slice(0, 200);
+              }
             }
           } catch { /* ignore */ }
 

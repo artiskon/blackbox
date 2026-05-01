@@ -41,5 +41,11 @@ export const DEFAULTS = {
   // Context tagging
   environment: null,
   tags: {},
-  user: null
+  user: null,
+
+  // Build / deploy provenance — auto-detected from common host env vars
+  // when not provided. Surfaces "this error came from build X / env Y"
+  // in the panel and bb-check, so devs can tell stale-vs-fresh at a glance.
+  buildSha: null,
+  nodeEnv: null
 };

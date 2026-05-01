@@ -3,6 +3,24 @@ export function installResourceHook(blackbox) {
   // Use native fetch for probing — avoids triggering our own network hook
   const nativeFetch = blackbox._getNativeFetch();
 
+  // Pull hostname out without throwing on relative/data: URLs.
+  function safeHostname(src) {
+    try {
+      if (!src || !src.startsWith('http')) return null;
+      return new URL(src).hostname;
+    } catch {
+      return null;
+    }
+  }
+
+  // Map HEAD probe outcomes to a single urlReachability label so triage in
+  // bb-check / panel can branch on cause without re-reading httpStatus +
+  // statusHint. Browsers don't expose net::ERR_* names through fetch — we
+  // distinguish "origin alive but blocking us" (CORS) from "origin doesn't
+  // answer at all" (DNS / connection refused) by attempting a no-cors probe
+  // after a cors failure: if no-cors also fails, the origin is unreachable
+  // (DNS, TLS, connection-refused all collapse to this — we expose it as
+  // unreachable_origin, which is an instant tell that the hostname is dead).
   const handler = (event) => {
     try {
       const target = event.target;
@@ -13,14 +31,18 @@ export function installResourceHook(blackbox) {
       const tagName = target.tagName.toLowerCase();
       const src = blackbox._stripQueryParams(target.src || target.href || '');
 
+      const hostname = safeHostname(src);
       const context = {
         tagName,
         src,
+        hostname,
         id: target.id || null,
         className: (target.className?.toString() || '').slice(0, 100),
       };
 
-      // Try to find the nearest data-bb attribute for component identification
+      // Capture nearby React component name and a few discriminating
+      // data-* attributes so a bare <img> error still tells you which
+      // component rendered it. Walks up at most 5 levels.
       let el = target;
       for (let i = 0; i < 5 && el; i++) {
         if (el.dataset?.bb) {
@@ -33,32 +55,59 @@ export function installResourceHook(blackbox) {
         }
         el = el.parentElement;
       }
+      // Even when we found data-bb, try to pull alt text / title for img tags —
+      // it's the cheapest way to identify what role the image plays.
+      try {
+        if (tagName === 'img') {
+          const alt = target.getAttribute('alt');
+          if (alt) context.alt = alt.slice(0, 100);
+        }
+      } catch { /* ignore */ }
 
-      // Probe URL with HEAD request to get HTTP status
-      // (browser error events don't include status codes)
-      if (src && src.startsWith('http') && nativeFetch) {
-        // Try cors first (gets real status), fall back to no-cors
-        nativeFetch(src, { method: 'HEAD', mode: 'cors' }).then(res => {
-          context.httpStatus = res.status;
-          blackbox._recordError({ message: `Resource failed to load: ${tagName} - ${src}`, stack: '', source: 'resource_load', context });
-        }).catch(() => {
-          // CORS blocked — try no-cors to distinguish reachable from unreachable
-          nativeFetch(src, { method: 'HEAD', mode: 'no-cors' }).then(() => {
-            context.statusHint = 'cors_blocked';
-            blackbox._recordError({ message: `Resource failed to load: ${tagName} - ${src}`, stack: '', source: 'resource_load', context });
-          }).catch(() => {
-            context.httpStatus = 0;
-            context.statusHint = 'unreachable';
-            blackbox._recordError({ message: `Resource failed to load: ${tagName} - ${src}`, stack: '', source: 'resource_load', context });
-          });
-        });
-      } else {
+      const emit = (reachability, extra) => {
+        context.urlReachability = reachability;
+        if (extra) Object.assign(context, extra);
         blackbox._recordError({
           message: `Resource failed to load: ${tagName} - ${src}`,
           stack: '',
           source: 'resource_load',
           context
         });
+      };
+
+      // Probe URL with HEAD request to classify reachability.
+      // (browser error events don't include status codes)
+      if (src && src.startsWith('http') && nativeFetch) {
+        nativeFetch(src, { method: 'HEAD', mode: 'cors' }).then(res => {
+          // Got a real response — reachable. Status tells us if it's a
+          // proper HTTP error (404/500) or actually OK (in which case the
+          // failure was something else: CORS during img decode, mixed
+          // content, etc).
+          if (res.status >= 200 && res.status < 400) {
+            emit('ok', { httpStatus: res.status });
+          } else {
+            emit('http_error', { httpStatus: res.status });
+          }
+        }).catch(() => {
+          // No usable response from cors. Try no-cors: if THAT succeeds, the
+          // origin is alive — we just can't read it (CORS). If no-cors ALSO
+          // fails, the origin itself is unreachable (DNS / refused / TLS).
+          nativeFetch(src, { method: 'HEAD', mode: 'no-cors' }).then(() => {
+            emit('cors_blocked', { httpStatus: 0 });
+          }).catch(() => {
+            emit('unreachable_origin', {
+              httpStatus: 0,
+              // Best-effort hint so users don't have to re-read the field
+              // pair to know what to do. "unreachable_origin" is the strong
+              // signal that the hostname doesn't resolve.
+              statusHint: 'origin_dns_or_refused'
+            });
+          });
+        });
+      } else {
+        // Probably a data: URL or relative path the browser already
+        // resolved to nothing. We can't classify further.
+        emit('unknown');
       }
     } catch { /* BlackBox must never crash the host app */ }
   };

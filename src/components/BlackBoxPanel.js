@@ -144,6 +144,7 @@ function BlackBoxPanel() {
   const [reportEmpty, setReportEmpty] = useState(false);
   const [reportText, setReportText] = useState(null);
   const [copiedErrorKey, setCopiedErrorKey] = useState(null);
+  const [showInternal, setShowInternal] = useState(false);
 
   const isConnected = blackbox.isConnectedToFirestore();
 
@@ -299,13 +300,15 @@ function BlackBoxPanel() {
     // -- Build report --
     const report = stripNulls({
       _type: 'BlackBox Diagnostic Report',
-      _version: '1.7.0',
+      _version: '1.8.0',
       _generatedAt: new Date().toISOString(),
-      _instructions: 'Errors are deduplicated (count = occurrences). Breadcrumbs are the single chronological trail of user actions for the session. Silences are buttons clicked with no followup (possible broken UI). History contains persisted errors from Firestore (grouped by fingerprint). Health is a 24h summary.',
+      _instructions: 'Errors are deduplicated (count = occurrences). Breadcrumbs are the single chronological trail of user actions for the session. Silences are buttons clicked with no followup (possible broken UI). History contains persisted errors from Firestore (grouped by fingerprint). Health is a 24h summary. Errors with internal:true had a stack of only framework frames — they are usually framework warnings, not app bugs. urlReachability on resource_load tells you DNS vs CORS vs HTTP failure at a glance.',
       session: stripNulls({
         id: blackbox.getSessionId(),
         errorCount,
         environment: config.environment,
+        nodeEnv: config.nodeEnv,
+        buildSha: config.buildSha,
         tags: config.tags,
         user: config.user,
         firestoreConnected: isConnected,
@@ -609,8 +612,15 @@ function BlackBoxPanel() {
     );
   }
 
-  const filteredLiveErrors = [...errors].reverse().filter(matchesSearch);
-  const filteredHistoryErrors = historyErrors.filter(matchesSearch);
+  function passesInternalFilter(err) {
+    if (showInternal) return true;
+    return !(err.internal === true || err._internal === true);
+  }
+  const filteredLiveErrors = [...errors].reverse().filter(matchesSearch).filter(passesInternalFilter);
+  const filteredHistoryErrors = historyErrors.filter(matchesSearch).filter(passesInternalFilter);
+  const hiddenInternalCount =
+    [...errors].filter(e => e.internal === true || e._internal === true).length +
+    historyErrors.filter(e => e.internal === true).length;
 
   return (
     <>
@@ -683,6 +693,14 @@ function BlackBoxPanel() {
           ))}
         </div>
 
+        {hiddenInternalCount > 0 && (tab === 'live' || tab === 'history') && (
+          <div style={{ padding: '4px 14px', fontSize: '10px', color: '#888', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+            <span>{hiddenInternalCount} framework-internal error{hiddenInternalCount !== 1 ? 's' : ''} hidden</span>
+            <button onClick={() => setShowInternal(s => !s)} style={filterChipStyle(showInternal)}>
+              {showInternal ? 'Hide' : 'Show'}
+            </button>
+          </div>
+        )}
         <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
           {tab === 'live' && (
             <div>
@@ -691,7 +709,7 @@ function BlackBoxPanel() {
                   {errors.length === 0 ? 'No errors captured' : 'No matching errors'}
                 </div>
               ) : filteredLiveErrors.map((err, i) => {
-                const errKey = `${err.source}:${(err.message || '').slice(0, 60)}:${err.metadata?.timestamp || i}`;
+                const errKey = `${err._fingerprint || 'fp'}:${err.metadata?.timestamp || ''}:${i}`;
                 const isExp = expandedError === errKey;
                 return (
                   <div key={errKey}>
