@@ -1,11 +1,11 @@
 'use client';
 import {
   blackbox_default
-} from "./chunk-WCMKI43W.js";
+} from "./chunk-6IHTH4NU.js";
 import {
   __spreadProps,
   __spreadValues
-} from "./chunk-7MPHHMMU.js";
+} from "./chunk-ZMTFW4GP.js";
 
 // src/components/BlackBoxPanel.js
 import { useState, useEffect, useCallback } from "react";
@@ -50,10 +50,16 @@ var breadcrumbLabel = {
 function bcTypeLabel(type) {
   return breadcrumbLabel[type] || type;
 }
+function shortenUrl(url, max = 60) {
+  if (!url || url.length <= max) return url;
+  const keepHead = Math.max(20, Math.floor(max * 0.55));
+  const keepTail = Math.max(10, max - keepHead - 1);
+  return url.slice(0, keepHead) + "\u2026" + url.slice(-keepTail);
+}
 function bcSummary(bc) {
   if (bc.type === "click") return `${bc.tag || "element"}${bc.id ? "#" + bc.id : ""} "${(bc.text || "").slice(0, 25)}"`;
   if (bc.type === "navigation") return `${bc.from || "?"} \u2192 ${bc.to || "?"}`;
-  if (bc.type === "network") return `${bc.method || "GET"} ${bc.url || ""} ${bc.status || ""}`;
+  if (bc.type === "network") return `${bc.method || "GET"} ${shortenUrl(bc.url || "")} ${bc.status || ""}`;
   if (bc.type === "error") return (bc.message || "").slice(0, 40);
   return bc.action || bc.message || bc.url || bc.to || bc.tag || "";
 }
@@ -222,7 +228,7 @@ function BlackBoxPanel() {
         out.from = bc.from;
         out.to = bc.to;
       } else if (bc.type === "network") {
-        out.req = `${bc.method || "GET"} ${bc.url || ""} \u2192 ${bc.status || "?"}`;
+        out.req = `${bc.method || "GET"} ${shortenUrl(bc.url || "", 80)} \u2192 ${bc.status || "?"}`;
         if (bc.duration) out.ms = bc.duration;
       } else if (bc.type === "error") {
         out.msg = (bc.message || "").slice(0, 60);
@@ -307,7 +313,7 @@ function BlackBoxPanel() {
     });
     const report = stripNulls({
       _type: "BlackBox Diagnostic Report",
-      _version: "1.8.1",
+      _version: "1.9.0",
       _generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
       _instructions: "Errors are deduplicated (count = occurrences). Breadcrumbs are the single chronological trail of user actions for the session. Silences are buttons clicked with no followup (possible broken UI). History contains persisted errors from Firestore (grouped by fingerprint). Health is a 24h summary. Errors with internal:true had a stack of only framework frames \u2014 they are usually framework warnings, not app bugs. urlReachability on resource_load tells you DNS vs CORS vs HTTP failure at a glance.",
       session: stripNulls({

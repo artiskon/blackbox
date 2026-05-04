@@ -13,14 +13,43 @@ export function installResourceHook(blackbox) {
     }
   }
 
-  // Map HEAD probe outcomes to a single urlReachability label so triage in
-  // bb-check / panel can branch on cause without re-reading httpStatus +
-  // statusHint. Browsers don't expose net::ERR_* names through fetch — we
-  // distinguish "origin alive but blocking us" (CORS) from "origin doesn't
-  // answer at all" (DNS / connection refused) by attempting a no-cors probe
-  // after a cors failure: if no-cors also fails, the origin is unreachable
-  // (DNS, TLS, connection-refused all collapse to this — we expose it as
-  // unreachable_origin, which is an instant tell that the hostname is dead).
+  // Headers we want to surface from a probe response — they materially
+  // change diagnosis (cf-ray identifies which Cloudflare PoP, x-amz-* /
+  // x-mediaitem identify the upstream/route, content-type tells image
+  // vs error-page, content-length disambiguates "empty 200" from real).
+  const PROBE_HEADER_ALLOWLIST = [
+    'cf-ray',
+    'cf-cache-status',
+    'content-type',
+    'content-length',
+    'x-amz-request-id',
+    'x-amz-id-2',
+    'x-mediaitem',
+    'x-version',
+    'x-served-by',
+    'server',
+  ];
+  function pickHeaders(headers) {
+    const out = {};
+    try {
+      for (const name of PROBE_HEADER_ALLOWLIST) {
+        const v = headers.get?.(name);
+        if (v) out[name] = String(v).slice(0, 200);
+      }
+    } catch { /* ignore */ }
+    return Object.keys(out).length > 0 ? out : null;
+  }
+
+  // Reachability is the single most-asked field from this hook. Values:
+  //   'ok'                — server responded 2xx/3xx (probable img-decode issue)
+  //   'http_error'        — server responded 4xx/5xx (status in httpStatus)
+  //   'opaque_response'   — server responded but cors prevented status read.
+  //                          DOES NOT mean CORS is the cause — a 404 served
+  //                          without CORS headers also lands here. Caller
+  //                          should check the Network tab to disambiguate.
+  //                          (Replaces the old, misleading 'cors_blocked'.)
+  //   'unreachable_origin'— DNS / TLS / connection refused (origin doesn't answer)
+  //   'unknown'           — couldn't probe (data: URL, relative path, etc.)
   const handler = (event) => {
     try {
       const target = event.target;
@@ -75,31 +104,49 @@ export function installResourceHook(blackbox) {
         });
       };
 
-      // Probe URL with HEAD request to classify reachability.
-      // (browser error events don't include status codes)
+      // Try a small Range GET so we can read both real status AND a body
+      // preview — the body preview is what tells us "the URL returned a
+      // JSON {error: ...}" vs "the URL returned an HTML 404 page" vs
+      // "the URL is actually an image but the browser couldn't decode."
+      // Range header keeps the data tiny even on accidental large bodies.
+      // If GET fails (CORS, network), fall through to a no-cors HEAD to
+      // distinguish reachable-but-opaque from origin-down.
       if (src && src.startsWith('http') && nativeFetch) {
-        nativeFetch(src, { method: 'HEAD', mode: 'cors' }).then(res => {
-          // Got a real response — reachable. Status tells us if it's a
-          // proper HTTP error (404/500) or actually OK (in which case the
-          // failure was something else: CORS during img decode, mixed
-          // content, etc).
+        nativeFetch(src, {
+          method: 'GET',
+          mode: 'cors',
+          headers: { Range: 'bytes=0-512' },
+        }).then(async res => {
+          const headers = pickHeaders(res.headers);
+          let bodyPreview = null;
+          try {
+            const text = await res.clone().text();
+            if (text) bodyPreview = text.slice(0, 200);
+          } catch { /* ignore — body unreadable */ }
+          const extra = {
+            httpStatus: res.status,
+            ...(headers ? { responseHeaders: headers } : {}),
+            ...(bodyPreview ? { responseBodyPreview: bodyPreview } : {}),
+          };
           if (res.status >= 200 && res.status < 400) {
-            emit('ok', { httpStatus: res.status });
+            emit('ok', extra);
           } else {
-            emit('http_error', { httpStatus: res.status });
+            emit('http_error', extra);
           }
         }).catch(() => {
-          // No usable response from cors. Try no-cors: if THAT succeeds, the
-          // origin is alive — we just can't read it (CORS). If no-cors ALSO
-          // fails, the origin itself is unreachable (DNS / refused / TLS).
+          // CORS prevented us from reading the response (or the origin is
+          // dead). Use no-cors HEAD to disambiguate the two — but DO NOT
+          // claim it was CORS-blocked: an origin returning 404 without
+          // CORS headers also lands here, and that misleading label burned
+          // ~20 min of debugging in two separate sessions.
           nativeFetch(src, { method: 'HEAD', mode: 'no-cors' }).then(() => {
-            emit('cors_blocked', { httpStatus: 0 });
+            emit('opaque_response', {
+              httpStatus: 0,
+              statusHint: 'reachable_but_status_unknown_check_network_tab'
+            });
           }).catch(() => {
             emit('unreachable_origin', {
               httpStatus: 0,
-              // Best-effort hint so users don't have to re-read the field
-              // pair to know what to do. "unreachable_origin" is the strong
-              // signal that the hostname doesn't resolve.
               statusHint: 'origin_dns_or_refused'
             });
           });

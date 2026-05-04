@@ -2,12 +2,14 @@
 import {
   bbFirestoreOp,
   bbOnSnapshot,
-  bbTrackAuth
-} from "./chunk-SC3GDLUT.js";
-import "./chunk-WCMKI43W.js";
-import "./chunk-7MPHHMMU.js";
+  bbTrackAuth,
+  bbWrapWrites
+} from "./chunk-7EVHFHLR.js";
+import "./chunk-6IHTH4NU.js";
+import "./chunk-ZMTFW4GP.js";
 export {
   bbFirestoreOp,
   bbOnSnapshot,
-  bbTrackAuth
+  bbTrackAuth,
+  bbWrapWrites
 };

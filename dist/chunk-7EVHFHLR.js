@@ -1,7 +1,7 @@
 'use client';
 import {
   blackbox_default
-} from "./chunk-WCMKI43W.js";
+} from "./chunk-6IHTH4NU.js";
 
 // src/core/hooks/firebaseHook.js
 function describeQueryRef(queryRef) {
@@ -108,6 +108,85 @@ async function bbTrackAuth(auth) {
     console.warn("[BlackBox] bbTrackAuth failed:", e);
   }
 }
+function bbWrapWrites(firestoreFns) {
+  const out = {};
+  const writeOps = ["addDoc", "setDoc", "updateDoc", "deleteDoc"];
+  for (const op of writeOps) {
+    const original = firestoreFns == null ? void 0 : firestoreFns[op];
+    if (typeof original !== "function") continue;
+    out[op] = function(refOrQuery, ...args) {
+      var _a, _b, _c;
+      const path = (refOrQuery == null ? void 0 : refOrQuery.path) || ((_c = (_b = (_a = refOrQuery == null ? void 0 : refOrQuery._key) == null ? void 0 : _a.path) == null ? void 0 : _b.canonicalString) == null ? void 0 : _c.call(_b)) || null;
+      let result;
+      try {
+        result = original(refOrQuery, ...args);
+      } catch (syncErr) {
+        try {
+          blackbox_default._addBreadcrumb("firebase", {
+            action: op,
+            status: "error",
+            path,
+            code: (syncErr == null ? void 0 : syncErr.code) || null
+          });
+          blackbox_default._recordError({
+            message: `Firestore ${op} failed (sync): ${(syncErr == null ? void 0 : syncErr.message) || (syncErr == null ? void 0 : syncErr.code) || syncErr}`,
+            stack: (syncErr == null ? void 0 : syncErr.stack) || "",
+            source: "firebase",
+            context: { code: syncErr == null ? void 0 : syncErr.code, operation: op, documentPath: path }
+          });
+        } catch (e) {
+        }
+        throw syncErr;
+      }
+      if (result && typeof result.then === "function") {
+        result.then(
+          () => {
+            try {
+              blackbox_default._addBreadcrumb("firebase", { action: op, status: "success", path });
+            } catch (e) {
+            }
+          },
+          (err) => {
+            try {
+              blackbox_default._addBreadcrumb("firebase", {
+                action: op,
+                status: "error",
+                path,
+                code: (err == null ? void 0 : err.code) || null
+              });
+              const ctx = {
+                code: err == null ? void 0 : err.code,
+                operation: op,
+                documentPath: path
+              };
+              if ((err == null ? void 0 : err.code) === "invalid-argument" && (op === "setDoc" || op === "updateDoc" || op === "addDoc")) {
+                try {
+                  const data = op === "addDoc" ? args[0] : args[0];
+                  if (data && typeof data === "object") {
+                    const keys = Object.keys(data);
+                    ctx.writeFields = keys.slice(0, 20);
+                    const undefinedKeys = keys.filter((k) => data[k] === void 0);
+                    if (undefinedKeys.length > 0) ctx.undefinedFields = undefinedKeys;
+                  }
+                } catch (e) {
+                }
+              }
+              blackbox_default._recordError({
+                message: `Firestore ${op} failed: ${(err == null ? void 0 : err.message) || (err == null ? void 0 : err.code) || err}`,
+                stack: (err == null ? void 0 : err.stack) || "",
+                source: "firebase",
+                context: ctx
+              });
+            } catch (e) {
+            }
+          }
+        );
+      }
+      return result;
+    };
+  }
+  return out;
+}
 async function bbOnSnapshot(queryRef, onNext, onError, opts = {}) {
   try {
     const { onSnapshot } = await import("firebase/firestore");
@@ -182,5 +261,6 @@ async function bbOnSnapshot(queryRef, onNext, onError, opts = {}) {
 export {
   bbFirestoreOp,
   bbTrackAuth,
+  bbWrapWrites,
   bbOnSnapshot
 };

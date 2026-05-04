@@ -2,19 +2,20 @@
 import {
   BlackBoxPanelWrapper,
   BlackBoxProvider_default
-} from "./chunk-RDSZZ32J.js";
+} from "./chunk-FIGN6EJH.js";
 import {
   bbFirestoreOp,
   bbOnSnapshot,
-  bbTrackAuth
-} from "./chunk-SC3GDLUT.js";
+  bbTrackAuth,
+  bbWrapWrites
+} from "./chunk-7EVHFHLR.js";
 import {
   bbR2Fetch
-} from "./chunk-NHAWFRGC.js";
+} from "./chunk-S6D5O7IK.js";
 import {
   blackbox_default
-} from "./chunk-WCMKI43W.js";
-import "./chunk-7MPHHMMU.js";
+} from "./chunk-6IHTH4NU.js";
+import "./chunk-ZMTFW4GP.js";
 export {
   BlackBoxPanelWrapper as BlackBoxPanel,
   BlackBoxProvider_default as BlackBoxProvider,
@@ -22,5 +23,6 @@ export {
   bbOnSnapshot,
   bbR2Fetch,
   bbTrackAuth,
+  bbWrapWrites,
   blackbox_default as default
 };

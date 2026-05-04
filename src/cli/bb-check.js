@@ -295,6 +295,45 @@ async function main() {
       }
     }
 
+    // Same-host clusters across fingerprints: when 2+ DIFFERENT fingerprints
+    // hit the same hostname (e.g. m.digitalden.solutions across resource_load
+    // and network sources), that's almost certainly one underlying root
+    // cause — a dead origin, a misconfigured CDN, a missing KV pointer.
+    // Two debug sessions had a 6-fingerprint pile-up from a single bad host
+    // before this clustering existed. Now they collapse to one row.
+    {
+      const byHost = new Map();
+      for (let i = 0; i < grouped.length; i++) {
+        const g = grouped[i];
+        if (g.source !== 'resource_load' && g.source !== 'network') continue;
+        // Try error.context.hostname first, then fall back to parsing the
+        // URL out of the message ("Resource failed to load: img - https://h/..").
+        const hostsSeen = new Set();
+        for (const e of g.errors) {
+          const h = e.context?.hostname;
+          if (h) { hostsSeen.add(h); continue; }
+          const m = (e.message || '').match(/https?:\/\/([^/\s]+)/);
+          if (m) hostsSeen.add(m[1]);
+        }
+        for (const host of hostsSeen) {
+          if (!byHost.has(host)) byHost.set(host, []);
+          byHost.get(host).push({ index: i + 1, fingerprint: g.fingerprint, occurrences: g.totalOccurrences });
+        }
+      }
+      for (const [host, entries] of byHost) {
+        if (entries.length >= 2) {
+          const totalOcc = entries.reduce((a, e) => a + e.occurrences, 0);
+          correlations.push({
+            kind: 'url_host_cluster',
+            host,
+            indices: entries.map(e => e.index),
+            fingerprints: entries.map(e => e.fingerprint),
+            totalOccurrences: totalOcc,
+          });
+        }
+      }
+    }
+
     // Pull the most recent error's environment/buildSha into sessionInfo so
     // the report header tells you "dev / commit abc1234" without grepping.
     const recent = errors[0];
@@ -365,6 +404,8 @@ async function main() {
           console.log(`    #${c.indices.join(' + #')} — same page (${c.path}), same session`);
         } else if (c.kind === 'multi_path') {
           console.log(`    #${c.index} — same fingerprint on ${c.paths.length} pages: ${c.paths.slice(0, 3).join(', ')}`);
+        } else if (c.kind === 'url_host_cluster') {
+          console.log(`    #${c.indices.join(' + #')} — ${c.indices.length} fingerprints against ${c.host} (${c.totalOccurrences} occ total) — likely ONE root cause`);
         }
       }
       console.log('');

@@ -36,7 +36,7 @@ var UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 var NUMERIC_ID_RE = /\/\d+(?=\/|$)/g;
 var HASH_SEGMENT_RE = /\/[a-zA-Z0-9]{15,}(?=\/|$)/g;
 var SKIP_FRAMES_RE = /node_modules|webpack|blackbox|__webpack|hot-update|\(native\)|<anonymous>|bbHandleError|console\.wrapped|at wrapped \(|consoleHook|errorHook|networkHook/i;
-var INTERNAL_ONLY_FRAMES_RE = /react-dom[-_/]|react\/cjs\/|next\/dist\/|next\/router|next-server|webpack-internal|__webpack_require__|pdfjs-dist\/|firebase\/|@firebase\/|@grpc\/|grpc-web|hot-update|chunk-[a-zA-Z0-9]+\.(m?js)|node_modules_.*\._\.(m?js)|<anonymous>|\(native\)/i;
+var INTERNAL_ONLY_FRAMES_RE = /react-dom[-_/]|react\/cjs\/|next\/dist\/|next\/router|next-server|webpack-internal|__webpack_require__|\/_next\/static\/|\/\d{3,5}-[a-f0-9]{8,}\.(m?js)|pdfjs-dist\/|firebase\/|@firebase\/|@grpc\/|grpc-web|hot-update|chunk-[a-zA-Z0-9]+\.(m?js)|node_modules_.*\._\.(m?js)|<anonymous>|\(native\)/i;
 var FIRESTORE_DOC_PATH_RE = /\b([a-zA-Z_][a-zA-Z0-9_-]*)\/([\w]{16,28})\b/g;
 var ISO_TIMESTAMP_RE = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[.\dZ+-]*/g;
 var CHUNK_FILENAME_RE = /chunk-[a-zA-Z0-9]{6,}\.(m?js)/g;
@@ -147,15 +147,18 @@ function generateFingerprint(message, source, path, stack) {
   const truncatedMessage = normalizeMessage(message);
   const normalizedPath = normalizePath(path);
   const topFrame = extractTopAppFrame(stack);
-  const input = `${truncatedMessage}|${source || ""}|${normalizedPath}|${topFrame}`;
+  const isResourceLoad = source === "resource_load";
+  const fpPath = isResourceLoad ? "" : normalizedPath;
+  const fpFrame = isResourceLoad ? "" : topFrame;
+  const input = `${truncatedMessage}|${source || ""}|${fpPath}|${fpFrame}`;
   const fingerprint = hashString(input);
   return {
     fingerprint,
     groupingInputs: {
       message: truncatedMessage,
       source: source || "",
-      normalizedPath,
-      topFrame
+      normalizedPath: fpPath,
+      topFrame: fpFrame
     }
   };
 }

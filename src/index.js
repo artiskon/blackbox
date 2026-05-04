@@ -5,7 +5,7 @@ export { default } from './core/blackbox.js';
 export { BlackBoxPanel, BlackBoxProvider } from './components/index.js';
 
 // Firebase wrapper utilities
-export { bbFirestoreOp, bbTrackAuth, bbOnSnapshot } from './core/hooks/firebaseHook.js';
+export { bbFirestoreOp, bbTrackAuth, bbOnSnapshot, bbWrapWrites } from './core/hooks/firebaseHook.js';
 
 // Object-storage wrapper (Cloudflare R2 / S3 / GCS)
 export { bbR2Fetch } from './core/hooks/storageHook.js';

@@ -58,6 +58,14 @@ export function installClickHook(blackbox) {
       // Skip clicks inside the BlackBox panel
       if (target.closest?.('[data-bb-panel]')) return;
 
+      // Skip clicks inside Next.js's dev error overlay — clicking "Try
+      // again" on the error overlay is a development-tool action, not a
+      // user-feature action, and it pollutes the breadcrumb trail right
+      // when you most need a clean trail (the overlay only appears when
+      // an error already fired). Covers both the legacy iframe-portal
+      // overlay and the modern in-tree React overlay.
+      if (target.closest?.('nextjs-portal, [data-nextjs-dialog-overlay], [data-nextjs-toast], [data-nextjs-error-overlay]')) return;
+
       const el = target.closest
         ? target.closest('button, a, [role="button"], input[type="submit"], [data-bb]') || target
         : target;

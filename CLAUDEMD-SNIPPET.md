@@ -1,4 +1,15 @@
-## BlackBox v1.8.0 — Dev-Time Error Monitoring
+## BlackBox v1.9.0 — Dev-Time Error Monitoring
+
+### What's new in v1.9.0:
+- **Critical fix:** `urlReachability: 'cors_blocked'` was misleading — it fired any time a `no-cors` HEAD succeeded, but a 404 served without CORS headers also matched that path. Renamed to `'opaque_response'` with hint `reachable_but_status_unknown_check_network_tab`. Burned ~20 minutes in two separate debug sessions before this fix.
+- **Resource_load fingerprint by host+tagName only** — drops `path` and stack-frame from the fingerprint inputs for `source: 'resource_load'`. Same broken CDN host firing on six different routes is now ONE row, not six.
+- **Resource probes capture status + headers + body preview**. The HEAD probe became a Range GET so we can read both real status AND a 200-byte body sample. Allowlisted headers (`cf-ray`, `cf-cache-status`, `content-type`, `content-length`, `x-amz-request-id`, `x-mediaitem`, `x-version`, `server`) come back in `context.responseHeaders`. No more manual `curl -I`.
+- **`bbWrapWrites(firestoreFns)`** new helper at `@artiskon/blackbox` — wraps `addDoc`/`setDoc`/`updateDoc`/`deleteDoc` so silent permission-denied rejections become BB errors even when the caller doesn't `.catch()` the promise. Solves the "items reload after delete with no error" debugging dead-end.
+- **`url_host_cluster` correlation** in bb-check — when 2+ different fingerprints hit the same hostname (e.g. all `m.digitalden.solutions` failures), they're surfaced as one cluster with total occurrence count. Catches the cross-source case where one resource_load + one network error are really the same upstream bug.
+- **Next.js dev error overlay clicks suppressed** — clicks inside `nextjs-portal` / `[data-nextjs-dialog-overlay]` / `[data-nextjs-toast]` no longer pollute the breadcrumb trail.
+- **First-occurrence slow_request suppressed** — the first slow hit per URL in a session is almost always a Next.js cold compile, not an app issue. Repeats still fire normally.
+- **Middle-truncated URLs** in panel display + report JSON — keeps both host and unique suffix visible (`https://m.host…AbC123XyZ`).
+- **Internal-frames regex covers Next.js minified chunks** like `64888-f1bd84ac51e4faa1.js` and `/_next/static/chunks/...` — more framework warnings now correctly classified as `internal: true`.
 
 ### What's new in v1.8.1:
 - **`bbR2Fetch(url, init, { description, bucket, key })`** new helper at `@artiskon/blackbox/storage`: wraps a fetch against Cloudflare R2 (or any object storage) and tags breadcrumbs/errors with `source: 'storage'`. Filter with `bb-check --source=storage`. Uses native fetch internally so the network hook doesn't double-record.

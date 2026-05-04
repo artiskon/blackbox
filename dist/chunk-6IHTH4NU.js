@@ -11,7 +11,7 @@ import {
   initPersistence,
   isCircuitOpen,
   isStackEntirelyInternal
-} from "./chunk-7MPHHMMU.js";
+} from "./chunk-ZMTFW4GP.js";
 
 // src/core/constants.js
 var DEFAULTS = {
@@ -189,23 +189,24 @@ function installClickHook(blackbox2) {
     return null;
   }
   const handler = (event) => {
-    var _a, _b, _c, _d, _e, _f, _g;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     try {
       const target = event.target;
       if ((_a = target.closest) == null ? void 0 : _a.call(target, "[data-bb-panel]")) return;
+      if ((_b = target.closest) == null ? void 0 : _b.call(target, "nextjs-portal, [data-nextjs-dialog-overlay], [data-nextjs-toast], [data-nextjs-error-overlay]")) return;
       const el = target.closest ? target.closest('button, a, [role="button"], input[type="submit"], [data-bb]') || target : target;
       const tag = el.tagName ? el.tagName.toLowerCase() : "unknown";
-      const text = ((_c = (_b = el.textContent) == null ? void 0 : _b.trim()) == null ? void 0 : _c.slice(0, 100)) || "";
+      const text = ((_d = (_c = el.textContent) == null ? void 0 : _c.trim()) == null ? void 0 : _d.slice(0, 100)) || "";
       const id = el.id || null;
-      const className = ((_e = (_d = el.className) == null ? void 0 : _d.toString()) == null ? void 0 : _e.slice(0, config.maxClassNameLength)) || "";
-      const dataBb = ((_f = el.dataset) == null ? void 0 : _f.bb) || null;
+      const className = ((_f = (_e = el.className) == null ? void 0 : _e.toString()) == null ? void 0 : _f.slice(0, config.maxClassNameLength)) || "";
+      const dataBb = ((_g = el.dataset) == null ? void 0 : _g.bb) || null;
       let href = el.href || null;
       if (href) href = blackbox2._stripQueryParams(href);
       const autoLabel = synthesizeLabel(el);
       blackbox2._addBreadcrumb("click", { tag, text, id, className, dataBb, href, autoLabel });
       const passiveInputTypes = ["text", "number", "email", "password", "tel", "search", "url", "date", "time", "datetime-local", "month", "week", "color", "range", "file"];
       const isPassiveInput = tag === "input" && passiveInputTypes.includes(el.type || "text");
-      const isInteractive = tag === "button" || tag === "input" && el.type === "submit" || ((_g = el.getAttribute) == null ? void 0 : _g.call(el, "role")) === "button" || tag === "a" && (!el.href || el.href === "#" || el.href.endsWith("#")) || !!dataBb && !isPassiveInput && tag !== "textarea";
+      const isInteractive = tag === "button" || tag === "input" && el.type === "submit" || ((_h = el.getAttribute) == null ? void 0 : _h.call(el, "role")) === "button" || tag === "a" && (!el.href || el.href === "#" || el.href.endsWith("#")) || !!dataBb && !isPassiveInput && tag !== "textarea";
       if (isInteractive) {
         blackbox2._registerSilenceCheck({ tag, text: autoLabel || text, id, dataBb });
       }
@@ -390,6 +391,7 @@ function installNetworkHook(blackbox2) {
   function isExcludedUrl(url) {
     return excludePatterns.some((pattern) => url.includes(pattern));
   }
+  const _firstSeenUrls = /* @__PURE__ */ new Set();
   function classifyHtmlErrorPage(text, status) {
     if (!text || text.length < 200) return null;
     const head = text.slice(0, 2e3);
@@ -543,7 +545,9 @@ function installNetworkHook(blackbox2) {
         } else {
           blackbox2._addBreadcrumb("network", crumbData);
         }
-        if (ok && duration > config.slowRequestThreshold) {
+        const isFirstHit = !_firstSeenUrls.has(url);
+        if (isFirstHit) _firstSeenUrls.add(url);
+        if (ok && duration > config.slowRequestThreshold && !isFirstHit) {
           blackbox2._addBreadcrumb("performance", {
             action: "slow_request",
             method,
@@ -627,6 +631,30 @@ function installResourceHook(blackbox2) {
       return null;
     }
   }
+  const PROBE_HEADER_ALLOWLIST = [
+    "cf-ray",
+    "cf-cache-status",
+    "content-type",
+    "content-length",
+    "x-amz-request-id",
+    "x-amz-id-2",
+    "x-mediaitem",
+    "x-version",
+    "x-served-by",
+    "server"
+  ];
+  function pickHeaders(headers) {
+    var _a;
+    const out = {};
+    try {
+      for (const name of PROBE_HEADER_ALLOWLIST) {
+        const v = (_a = headers.get) == null ? void 0 : _a.call(headers, name);
+        if (v) out[name] = String(v).slice(0, 200);
+      }
+    } catch (e) {
+    }
+    return Object.keys(out).length > 0 ? out : null;
+  }
   const handler = (event) => {
     var _a, _b;
     try {
@@ -673,21 +701,35 @@ function installResourceHook(blackbox2) {
         });
       };
       if (src && src.startsWith("http") && nativeFetch) {
-        nativeFetch(src, { method: "HEAD", mode: "cors" }).then((res) => {
+        nativeFetch(src, {
+          method: "GET",
+          mode: "cors",
+          headers: { Range: "bytes=0-512" }
+        }).then(async (res) => {
+          const headers = pickHeaders(res.headers);
+          let bodyPreview = null;
+          try {
+            const text = await res.clone().text();
+            if (text) bodyPreview = text.slice(0, 200);
+          } catch (e) {
+          }
+          const extra = __spreadValues(__spreadValues({
+            httpStatus: res.status
+          }, headers ? { responseHeaders: headers } : {}), bodyPreview ? { responseBodyPreview: bodyPreview } : {});
           if (res.status >= 200 && res.status < 400) {
-            emit("ok", { httpStatus: res.status });
+            emit("ok", extra);
           } else {
-            emit("http_error", { httpStatus: res.status });
+            emit("http_error", extra);
           }
         }).catch(() => {
           nativeFetch(src, { method: "HEAD", mode: "no-cors" }).then(() => {
-            emit("cors_blocked", { httpStatus: 0 });
+            emit("opaque_response", {
+              httpStatus: 0,
+              statusHint: "reachable_but_status_unknown_check_network_tab"
+            });
           }).catch(() => {
             emit("unreachable_origin", {
               httpStatus: 0,
-              // Best-effort hint so users don't have to re-read the field
-              // pair to know what to do. "unreachable_origin" is the strong
-              // signal that the hostname doesn't resolve.
               statusHint: "origin_dns_or_refused"
             });
           });
@@ -1031,7 +1073,7 @@ var blackbox = {
   // --- Firestore query methods for the UI panel ---
   async queryPersistedErrors(limit = 50) {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-CU5NAUZI.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-PSQAQMBM.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { errors: [], connected: false };
@@ -1070,7 +1112,7 @@ var blackbox = {
   },
   async queryHealth() {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-CU5NAUZI.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-PSQAQMBM.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { connected: false };
@@ -1108,7 +1150,7 @@ var blackbox = {
   },
   async queryTimeline(minutes = 5) {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-CU5NAUZI.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-PSQAQMBM.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { events: [], connected: false };
@@ -1137,7 +1179,7 @@ var blackbox = {
   },
   async clearPersistedErrors() {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-CU5NAUZI.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-PSQAQMBM.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref || !fns.deleteDoc) return { success: false, error: "Not connected to Firestore" };

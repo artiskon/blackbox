@@ -26,3 +26,10 @@ export declare function bbOnSnapshot(
   onError?: (error: any) => void,
   opts?: { description?: string }
 ): Promise<(() => void) | undefined>;
+
+/** Auto-instrument Firestore write functions so silent permission-denied
+ *  rejections become BB errors even when the caller doesn't .catch() the
+ *  promise. Pass an object whose keys are the imported write functions; get
+ *  back wrapped versions to use throughout the app.
+ */
+export declare function bbWrapWrites<T extends Record<string, Function>>(firestoreFns: T): T;

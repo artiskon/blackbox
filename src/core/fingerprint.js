@@ -13,7 +13,17 @@ const SKIP_FRAMES_RE = /node_modules|webpack|blackbox|__webpack|hot-update|\(nat
 // If EVERY frame in a stack matches this, the error is "internal" — likely a
 // framework warning re-thrown as an error or a vendor library issue, not
 // something the app developer can fix. Hidden by default in bb-check / panel.
-const INTERNAL_ONLY_FRAMES_RE = /react-dom[-_/]|react\/cjs\/|next\/dist\/|next\/router|next-server|webpack-internal|__webpack_require__|pdfjs-dist\/|firebase\/|@firebase\/|@grpc\/|grpc-web|hot-update|chunk-[a-zA-Z0-9]+\.(m?js)|node_modules_.*\._\.(m?js)|<anonymous>|\(native\)/i;
+//
+// Pattern coverage:
+//   react-dom* / react/cjs           — React internals
+//   next/dist / next/router / chunk-*  — Next.js compiled output
+//   webpack-internal / __webpack_require__ — webpack runtime
+//   /_next/static/chunks/...         — Next.js bundled chunks (any name)
+//   12345-abc...js                    — Next.js minified bundle hash
+//                                       (e.g. 64888-f1bd84ac51e4faa1.js)
+//   pdfjs-dist / firebase/* / @grpc/  — common vendor libs
+//   <anonymous>, (native)             — V8 synthetic frames
+const INTERNAL_ONLY_FRAMES_RE = /react-dom[-_/]|react\/cjs\/|next\/dist\/|next\/router|next-server|webpack-internal|__webpack_require__|\/_next\/static\/|\/\d{3,5}-[a-f0-9]{8,}\.(m?js)|pdfjs-dist\/|firebase\/|@firebase\/|@grpc\/|grpc-web|hot-update|chunk-[a-zA-Z0-9]+\.(m?js)|node_modules_.*\._\.(m?js)|<anonymous>|\(native\)/i;
 
 // Firestore doc ID pattern: collection/docId where docId is 20-char alphanumeric
 const FIRESTORE_DOC_PATH_RE = /\b([a-zA-Z_][a-zA-Z0-9_-]*)\/([\w]{16,28})\b/g;
@@ -190,7 +200,18 @@ export function generateFingerprint(message, source, path, stack) {
   const normalizedPath = normalizePath(path);
   const topFrame = extractTopAppFrame(stack);
 
-  const input = `${truncatedMessage}|${source || ''}|${normalizedPath}|${topFrame}`;
+  // Resource-load errors describe a network outcome: "img - host/path/*".
+  // The URL pattern is already in the message after normalization, and the
+  // path the user happened to be on when it fired is metadata, not identity.
+  // Same broken CDN host firing on /admin/foo and /client/bar is ONE bug.
+  // (Two debugging sessions spent ~30 min collectively triaging six rows
+  // that were really one issue, before this fix.) Stack is also useless:
+  // resource_load synthesizes an empty stack.
+  const isResourceLoad = source === 'resource_load';
+  const fpPath = isResourceLoad ? '' : normalizedPath;
+  const fpFrame = isResourceLoad ? '' : topFrame;
+
+  const input = `${truncatedMessage}|${source || ''}|${fpPath}|${fpFrame}`;
   const fingerprint = hashString(input);
 
   return {
@@ -198,8 +219,8 @@ export function generateFingerprint(message, source, path, stack) {
     groupingInputs: {
       message: truncatedMessage,
       source: source || '',
-      normalizedPath,
-      topFrame
+      normalizedPath: fpPath,
+      topFrame: fpFrame
     }
   };
 }

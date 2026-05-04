@@ -7,6 +7,14 @@ export function installNetworkHook(blackbox) {
     return excludePatterns.some(pattern => url.includes(pattern));
   }
 
+  // First-seen URL set used to suppress the slow_request breadcrumb the
+  // FIRST time we hit any given URL in a session. Rationale: in Next.js
+  // dev, the first request to a route triggers a JIT compile that can
+  // easily take 5–10s on a cold cache — that's expected and not actionable.
+  // The same URL slow on its SECOND hit is real signal worth surfacing.
+  // Tiny memory cost (Set of URL strings) and reset on destroy().
+  const _firstSeenUrls = new Set();
+
   // Recognize generic upstream error pages so we don't shove 4 KB of
   // boilerplate HTML into the report. Returns either null (keep body
   // verbatim) or a structured replacement: {summary, kind} that the
@@ -215,7 +223,12 @@ export function installNetworkHook(blackbox) {
           blackbox._addBreadcrumb('network', crumbData);
         }
 
-        if (ok && duration > config.slowRequestThreshold) {
+        // slow_request: skip the FIRST occurrence of any URL in this session
+        // — in dev mode that's almost always a Next.js cold-compile and not
+        // an app-level performance issue. Subsequent slow hits are real signal.
+        const isFirstHit = !_firstSeenUrls.has(url);
+        if (isFirstHit) _firstSeenUrls.add(url);
+        if (ok && duration > config.slowRequestThreshold && !isFirstHit) {
           blackbox._addBreadcrumb('performance', {
             action: 'slow_request',
             method, url, duration,
