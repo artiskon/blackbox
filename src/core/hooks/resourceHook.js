@@ -85,7 +85,13 @@ export function installResourceHook(blackbox) {
       if (!resourceTags.has(target.tagName)) return;
 
       const tagName = target.tagName.toLowerCase();
-      const src = blackbox._stripQueryParams(target.src || target.href || '');
+      // rawSrc keeps the query string intact (signed-URL tokens, ?mode=
+      // selectors, cache busters). Used for the probe (so we hit the
+      // actual response the browser saw) and exposed as the ephemeral
+      // context._rawSrc surface for diagnostic matchers. Stripped src
+      // is what we persist for fingerprint stability and privacy.
+      const rawSrc = target.src || target.href || '';
+      const src = blackbox._stripQueryParams(rawSrc);
 
       const hostname = safeHostname(src);
       const context = {
@@ -94,6 +100,10 @@ export function installResourceHook(blackbox) {
         hostname,
         id: target.id || null,
         className: (target.className?.toString() || '').slice(0, 100),
+        // Underscore-prefixed: ephemeral, stripped before persistence and
+        // before panel report export. Visible to registerDiagnostic match
+        // functions so they can match on the original URL with query.
+        ...(rawSrc !== src ? { _rawSrc: rawSrc } : {}),
       };
 
       // Capture nearby React component name and a few discriminating
@@ -138,8 +148,14 @@ export function installResourceHook(blackbox) {
       // Range header keeps the data tiny even on accidental large bodies.
       // If GET fails (CORS, network), fall through to a no-cors HEAD to
       // distinguish reachable-but-opaque from origin-down.
-      if (src && src.startsWith('http') && nativeFetch) {
-        nativeFetch(src, {
+      //
+      // Probe the rawSrc (with query params): the params often determine
+      // the response (signed-URL tokens, ?mode= selectors). Stripping them
+      // before the probe — as we did pre-1.9.3 — caused a tag_content_type_
+      // mismatch demo to misclassify, because the probe hit the bare
+      // endpoint instead of the URL the browser actually loaded.
+      if (rawSrc && rawSrc.startsWith('http') && nativeFetch) {
+        nativeFetch(rawSrc, {
           method: 'GET',
           mode: 'cors',
           headers: { Range: 'bytes=0-512' },
@@ -180,7 +196,7 @@ export function installResourceHook(blackbox) {
           // claim it was CORS-blocked: an origin returning 404 without
           // CORS headers also lands here, and that misleading label burned
           // ~20 min of debugging in two separate sessions.
-          nativeFetch(src, { method: 'HEAD', mode: 'no-cors' }).then(() => {
+          nativeFetch(rawSrc, { method: 'HEAD', mode: 'no-cors' }).then(() => {
             emit('opaque_response', {
               httpStatus: 0,
               statusHint: 'reachable_but_status_unknown_check_network_tab'

@@ -111,6 +111,8 @@ blackbox.registerDiagnostic('r2-asset-state', {
 
 The result lands at `error.context.diagnostics['r2-asset-state']`. Diagnostics that exceed `timeoutMs` get `{error: 'timeout'}` and the slow probe's late result is dropped — design probes to be fast.
 
+**RegExp matchers see the raw URL.** Hooks expose `context._rawSrc` (resource_load) and `context._rawUrl` (network / storage) for the matcher to probe — these carry query strings (signed-URL tokens, `?mode=` selectors) that the persisted `context.url` strips. The underscore-prefixed surfaces are ephemeral: visible to the matcher, never written to Firestore, never included in the panel report. Function-style `match` callbacks always have access to the full entry.
+
 ## Firestore Query Context (Recommended for subscriptions)
 
 Pass an optional `description` to `bbOnSnapshot` and BlackBox auto-extracts `queryPath` + `queryFilters` from the queryRef when the subscription emits permission-denied:

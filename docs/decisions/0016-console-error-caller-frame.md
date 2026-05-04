@@ -30,4 +30,4 @@ Required exporting `extractTopAppFrame` from `fingerprint.js` (was previously fi
 
 ## Subsequent feedback
 
-- None yet. Should noticeably improve console.error triage in the typical case.
+- **v1.9.3 (bug fix):** the v1.9.2 dogfood session showed `context.callerFrame` was never populated under Next.js dev mode. Root cause: `SKIP_FRAMES_RE` in `fingerprint.js` matched a bare `webpack` token, but in Next dev mode every frame (including app code) carries the `webpack-internal:///` prefix. Result: `extractTopAppFrame` skipped *all* frames and returned empty. Fix: removed the bare `webpack` alternation. Framework code under that prefix is still caught by the `node_modules` token (e.g. `webpack-internal:///(app-pages-browser)/./node_modules/next/...`); webpack runtime functions are still caught by `__webpack`. App code at `webpack-internal:///(app-pages-browser)/./src/...` now correctly survives the filter and lands in `context.callerFrame`.

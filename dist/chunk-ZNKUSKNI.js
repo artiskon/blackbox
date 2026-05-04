@@ -34,7 +34,7 @@ var __objRest = (source, exclude) => {
 var UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 var NUMERIC_ID_RE = /\/\d+(?=\/|$)/g;
 var HASH_SEGMENT_RE = /\/[a-zA-Z0-9]{15,}(?=\/|$)/g;
-var SKIP_FRAMES_RE = /node_modules|webpack|blackbox|__webpack|hot-update|\(native\)|<anonymous>|bbHandleError|console\.wrapped|at wrapped \(|consoleHook|errorHook|networkHook/i;
+var SKIP_FRAMES_RE = /node_modules|blackbox|__webpack|hot-update|\(native\)|<anonymous>|bbHandleError|console\.wrapped|at wrapped \(|consoleHook|errorHook|networkHook/i;
 var INTERNAL_ONLY_FRAMES_RE = /react-dom[-_/]|react\/cjs\/|next\/dist\/|next\/router|next-server|webpack-internal|__webpack_require__|\/_next\/static\/|\/\d{3,5}-[a-f0-9]{8,}\.(m?js)|pdfjs-dist\/|firebase\/|@firebase\/|@grpc\/|grpc-web|hot-update|chunk-[a-zA-Z0-9]+\.(m?js)|node_modules_.*\._\.(m?js)|<anonymous>|\(native\)/i;
 var FIRESTORE_DOC_PATH_RE = /\b([a-zA-Z_][a-zA-Z0-9_-]*)\/([\w]{16,28})\b/g;
 var ISO_TIMESTAMP_RE = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[.\dZ+-]*/g;
@@ -208,6 +208,15 @@ function userKeyFor(errorEntry) {
   if (uid) return String(uid).slice(0, 64);
   if (errorEntry == null ? void 0 : errorEntry.sessionId) return `anon:${String(errorEntry.sessionId).slice(0, 16)}`;
   return null;
+}
+function stripEphemeralContextKeys(context) {
+  if (!context || typeof context !== "object") return context;
+  const out = {};
+  for (const [k, v] of Object.entries(context)) {
+    if (k.startsWith("_")) continue;
+    out[k] = v;
+  }
+  return out;
 }
 function estimateDocBytes(doc) {
   try {
@@ -415,7 +424,7 @@ async function _doWrite(errorEntry) {
       url: errorEntry.url,
       path: errorEntry.path,
       breadcrumbs: errorEntry.breadcrumbs || [],
-      context: errorEntry.context || {},
+      context: stripEphemeralContextKeys(errorEntry.context || {}),
       metadata: errorEntry.metadata || {},
       occurrences: errorEntry._storm ? errorEntry._storm.count : 1
     }), userKey ? { uniqueUsers: [userKey], uniqueUserCount: 1 } : {}), errorEntry.internal ? { internal: true } : {}), {

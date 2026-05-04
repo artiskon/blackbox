@@ -58,6 +58,11 @@ Required sections:
 - [0015 — `action_hint` on Firestore permission-denied](0015-action-hint-firestore-permission-denied.md)
 - [0016 — Caller frame on `console.error`](0016-console-error-caller-frame.md)
 
+### v1.9.3
+
+- [0021 — Underscore-prefixed context keys are ephemeral](0021-ephemeral-context-keys.md)
+- (also touches ADR-0007 / ADR-0014 / ADR-0016 — see "Subsequent feedback" sections in each)
+
 ### Deferred (recurring asks we have NOT shipped)
 
 - [0017 — React fiber component lineage on resource_load](0017-deferred-react-fiber-component-lineage.md)

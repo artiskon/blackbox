@@ -1,11 +1,11 @@
 "use client";
 import {
   blackbox_default
-} from "../chunk-JFABW74X.js";
+} from "../chunk-TC5I246H.js";
 import {
   __spreadProps,
   __spreadValues
-} from "../chunk-52YKMLD7.js";
+} from "../chunk-ZNKUSKNI.js";
 
 // src/components/BlackBoxPanel.js
 import { useState, useEffect, useCallback } from "react";
@@ -285,7 +285,11 @@ function BlackBoxPanel() {
         count: 1
       }, err._stormCount ? { storm: true, stormCount: err._stormCount } : {}));
       if (err.context && Object.keys(err.context).length > 0) {
-        const ctx = __spreadValues({}, err.context);
+        const ctx = {};
+        for (const [k, v] of Object.entries(err.context)) {
+          if (k.startsWith("_")) continue;
+          ctx[k] = v;
+        }
         if (typeof ctx.responseBody === "string" && ctx.responseBody.length > 400) {
           ctx.responseBody = ctx.responseBody.slice(0, 400) + "\u2026";
         }
@@ -314,7 +318,7 @@ function BlackBoxPanel() {
     });
     const report = stripNulls({
       _type: "BlackBox Diagnostic Report",
-      _version: "1.9.2",
+      _version: "1.9.3",
       _generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
       _instructions: "Errors are deduplicated (count = occurrences). Breadcrumbs are the single chronological trail of user actions for the session. Silences are buttons clicked with no followup (possible broken UI). History contains persisted errors from Firestore (grouped by fingerprint). Health is a 24h summary. Errors with internal:true had a stack of only framework frames \u2014 they are usually framework warnings, not app bugs. urlReachability on resource_load tells you DNS vs CORS vs HTTP failure at a glance.",
       session: stripNulls({

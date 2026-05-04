@@ -41,4 +41,5 @@ v1.9.0 renamed `cors_blocked` → `opaque_response` with a clearer hint: `status
 ## Subsequent feedback
 
 - BB-1.8 agent (acted on in v1.9.2 batch) re-cited misleading `cors_blocked`. That was on a runtime predating this decision; confirmed shipped fix.
+- **v1.9.3 (additive):** the v1.9.2 dogfood session exposed that the probe was using the *stripped* URL (no query params). For URLs whose response depends on query params (signed-URL tokens, `?mode=foo` selectors), the probe hit the wrong endpoint and misclassified — e.g. `?mode=video` returning `Content-Type: video/mp4` was probed as the bare endpoint returning JSON 403, classified as `http_error` instead of the intended `tag_content_type_mismatch`. v1.9.3 captures `rawSrc` (with query) and uses it for all three probe paths (cors GET, no-cors HEAD, no-cors HEAD fallback). The stripped `src` is still used for `context.src`, fingerprint, and dedup.
 - **If a future agent asks to "rename `opaque_response` back to `cors_blocked`" or "remove the verbose hint":** check this ADR first. The wrong-confident label was actively misleading; reverting requires a stronger justification than "the new label is verbose".

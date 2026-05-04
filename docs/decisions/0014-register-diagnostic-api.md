@@ -40,4 +40,5 @@ Companion `blackbox.unregisterDiagnostic(name)` for cleanup.
 
 ## Subsequent feedback
 
-- None yet. Watch for "diagnostic ran but result didn't show in panel" reports — would indicate the `_notifySubscribers` flow isn't propagating fast enough; consider sync-await with longer timeout if so.
+- **v1.9.3 (additive):** the v1.9.2 dogfood session exposed that regex matchers couldn't see URLs with query params, because the network/resource/storage hooks all strip query params before `context.url` / `context.src` (privacy default since v1.0). A test diagnostic with `match: /\/api\/bb-test\?mode=diagnostic/` couldn't fire because `?mode=diagnostic` was stripped from every probe surface. v1.9.3 added two new probe surfaces — `context._rawSrc` and `context._rawUrl` — populated by hooks alongside the stripped equivalents and stripped before persistence / panel report. See ADR-0021 for the underscore-prefix ephemeral convention. Function-style match callbacks always saw the full entry; this only affected RegExp matchers.
+- Watch for "diagnostic ran but result didn't show in panel" reports — would indicate the `_notifySubscribers` flow isn't propagating fast enough; consider sync-await with longer timeout if so.

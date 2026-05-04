@@ -11,7 +11,7 @@ import {
   initPersistence,
   isCircuitOpen,
   isStackEntirelyInternal
-} from "./chunk-52YKMLD7.js";
+} from "./chunk-ZNKUSKNI.js";
 
 // src/core/constants.js
 var DEFAULTS = {
@@ -432,11 +432,13 @@ function installNetworkHook(blackbox2) {
       }
       const method = (init.method || "GET").toUpperCase();
       let url = "";
+      let rawUrl = "";
       let isSameOrigin = false;
       try {
-        url = typeof input === "string" ? input : (input == null ? void 0 : input.url) || String(input);
-        url = blackbox2._stripQueryParams(url);
+        rawUrl = typeof input === "string" ? input : (input == null ? void 0 : input.url) || String(input);
+        url = blackbox2._stripQueryParams(rawUrl);
         if (url.length > config.maxUrlLength) url = url.slice(0, config.maxUrlLength);
+        if (rawUrl.length > config.maxUrlLength) rawUrl = rawUrl.slice(0, config.maxUrlLength);
         if (typeof location !== "undefined") {
           isSameOrigin = !url.startsWith("http") || url.startsWith(location.origin);
         }
@@ -459,7 +461,7 @@ function installNetworkHook(blackbox2) {
           const errMsg = err.message || "";
           const corsBlocked = /cors|blocked|cross.origin|not allowed by access/i.test(errMsg) || err.name === "TypeError" && errMsg === "Failed to fetch";
           const crumbData = { method, url, status: 0, duration, ok: false, error: errMsg };
-          const errorContext = { method, url, duration };
+          const errorContext = __spreadValues({ method, url, duration }, rawUrl !== url ? { _rawUrl: rawUrl } : {});
           if (corsBlocked) {
             crumbData.cors_blocked = true;
             errorContext.cors_blocked = true;
@@ -516,7 +518,7 @@ function installNetworkHook(blackbox2) {
         }
         if (!ok) {
           const maxBody = config.maxErrorBodyLength || 1024;
-          const errorContext = { status, method, url, duration };
+          const errorContext = __spreadValues({ status, method, url, duration }, rawUrl !== url ? { _rawUrl: rawUrl } : {});
           try {
             if (init.body) {
               const bodyStr = typeof init.body === "string" ? init.body : init.body instanceof FormData ? [...init.body.keys()].join(", ") : String(init.body);
@@ -683,15 +685,16 @@ function installResourceHook(blackbox2) {
       if (target === window || !target.tagName) return;
       if (!resourceTags.has(target.tagName)) return;
       const tagName = target.tagName.toLowerCase();
-      const src = blackbox2._stripQueryParams(target.src || target.href || "");
+      const rawSrc = target.src || target.href || "";
+      const src = blackbox2._stripQueryParams(rawSrc);
       const hostname = safeHostname(src);
-      const context = {
+      const context = __spreadValues({
         tagName,
         src,
         hostname,
         id: target.id || null,
         className: (((_a = target.className) == null ? void 0 : _a.toString()) || "").slice(0, 100)
-      };
+      }, rawSrc !== src ? { _rawSrc: rawSrc } : {});
       let el = target;
       for (let i = 0; i < 5 && el; i++) {
         if ((_b = el.dataset) == null ? void 0 : _b.bb) {
@@ -721,8 +724,8 @@ function installResourceHook(blackbox2) {
           context
         });
       };
-      if (src && src.startsWith("http") && nativeFetch) {
-        nativeFetch(src, {
+      if (rawSrc && rawSrc.startsWith("http") && nativeFetch) {
+        nativeFetch(rawSrc, {
           method: "GET",
           mode: "cors",
           headers: { Range: "bytes=0-512" }
@@ -751,7 +754,7 @@ function installResourceHook(blackbox2) {
             emit("http_error", extra);
           }
         }).catch(() => {
-          nativeFetch(src, { method: "HEAD", mode: "no-cors" }).then(() => {
+          nativeFetch(rawSrc, { method: "HEAD", mode: "no-cors" }).then(() => {
             emit("opaque_response", {
               httpStatus: 0,
               statusHint: "reachable_but_status_unknown_check_network_tab"
@@ -912,14 +915,16 @@ function _notifySubscribers() {
   });
 }
 function _diagnosticMatches(d, errorEntry) {
-  var _a, _b;
+  var _a, _b, _c, _d;
   try {
     if (typeof d.match === "function") return !!d.match(errorEntry);
     const probes = [
       errorEntry.message || "",
       errorEntry.url || "",
       ((_a = errorEntry.context) == null ? void 0 : _a.src) || "",
-      ((_b = errorEntry.context) == null ? void 0 : _b.url) || ""
+      ((_b = errorEntry.context) == null ? void 0 : _b.url) || "",
+      ((_c = errorEntry.context) == null ? void 0 : _c._rawSrc) || "",
+      ((_d = errorEntry.context) == null ? void 0 : _d._rawUrl) || ""
     ];
     return probes.some((s) => s && d.match.test(s));
   } catch (e) {
@@ -1184,7 +1189,7 @@ var blackbox = {
   // --- Firestore query methods for the UI panel ---
   async queryPersistedErrors(limit = 50) {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-NZ4BYG7D.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-MZWEDNL3.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { errors: [], connected: false };
@@ -1223,7 +1228,7 @@ var blackbox = {
   },
   async queryHealth() {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-NZ4BYG7D.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-MZWEDNL3.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { connected: false };
@@ -1261,7 +1266,7 @@ var blackbox = {
   },
   async queryTimeline(minutes = 5) {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-NZ4BYG7D.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-MZWEDNL3.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { events: [], connected: false };
@@ -1290,7 +1295,7 @@ var blackbox = {
   },
   async clearPersistedErrors() {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-NZ4BYG7D.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-MZWEDNL3.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref || !fns.deleteDoc) return { success: false, error: "Not connected to Firestore" };

@@ -1,10 +1,10 @@
 import {
   blackbox_default
-} from "./chunk-JFABW74X.js";
+} from "./chunk-TC5I246H.js";
 import {
   __spreadProps,
   __spreadValues
-} from "./chunk-52YKMLD7.js";
+} from "./chunk-ZNKUSKNI.js";
 
 // src/core/hooks/storageHook.js
 async function bbR2Fetch(input, init = {}, details = {}) {
@@ -29,13 +29,13 @@ async function bbR2Fetch(input, init = {}, details = {}) {
   } catch (err) {
     try {
       const duration = Date.now() - start;
-      const ctx = __spreadProps(__spreadValues(__spreadValues(__spreadValues({
+      const ctx = __spreadValues(__spreadProps(__spreadValues(__spreadValues(__spreadValues({
         method,
         url: safeUrl,
         duration
       }, details.description ? { description: String(details.description).slice(0, 200) } : {}), details.bucket ? { bucket: String(details.bucket).slice(0, 100) } : {}), details.key ? { key: String(details.key).slice(0, 200) } : {}), {
         error: (err == null ? void 0 : err.message) || String(err)
-      });
+      }), url !== safeUrl ? { _rawUrl: url } : {});
       blackbox_default._addBreadcrumb("network", { method, url: safeUrl, status: 0, duration, ok: false, error: ctx.error, _storage: true });
       blackbox_default._recordError({
         message: `Storage error: ${method} ${safeUrl} - ${ctx.error}`,
@@ -65,12 +65,12 @@ async function bbR2Fetch(input, init = {}, details = {}) {
         message: `Storage HTTP ${status}: ${method} ${safeUrl}`,
         stack: "",
         source: "storage",
-        context: __spreadValues(__spreadValues(__spreadValues({
+        context: __spreadValues(__spreadValues(__spreadValues(__spreadValues({
           method,
           url: safeUrl,
           status,
           duration
-        }, details.description ? { description: String(details.description).slice(0, 200) } : {}), details.bucket ? { bucket: String(details.bucket).slice(0, 100) } : {}), details.key ? { key: String(details.key).slice(0, 200) } : {})
+        }, details.description ? { description: String(details.description).slice(0, 200) } : {}), details.bucket ? { bucket: String(details.bucket).slice(0, 100) } : {}), details.key ? { key: String(details.key).slice(0, 200) } : {}), url !== safeUrl ? { _rawUrl: url } : {})
       });
     }
   } catch (e) {

@@ -71,11 +71,13 @@ export function installNetworkHook(blackbox) {
 
       const method = (init.method || 'GET').toUpperCase();
       let url = '';
+      let rawUrl = '';
       let isSameOrigin = false;
       try {
-        url = typeof input === 'string' ? input : input?.url || String(input);
-        url = blackbox._stripQueryParams(url);
+        rawUrl = typeof input === 'string' ? input : input?.url || String(input);
+        url = blackbox._stripQueryParams(rawUrl);
         if (url.length > config.maxUrlLength) url = url.slice(0, config.maxUrlLength);
+        if (rawUrl.length > config.maxUrlLength) rawUrl = rawUrl.slice(0, config.maxUrlLength);
         // Same-origin if relative or matches current origin. Used to gate
         // request-body capture (external hosts may carry API keys).
         if (typeof location !== 'undefined') {
@@ -108,7 +110,11 @@ export function installNetworkHook(blackbox) {
             || (err.name === 'TypeError' && errMsg === 'Failed to fetch');
 
           const crumbData = { method, url, status: 0, duration, ok: false, error: errMsg };
-          const errorContext = { method, url, duration };
+          // Underscore-prefixed: ephemeral, stripped before persistence and
+          // panel report export. Visible to registerDiagnostic match
+          // functions so they can match on URLs whose query params determine
+          // the response (signed-URL tokens, ?mode= selectors, etc).
+          const errorContext = { method, url, duration, ...(rawUrl !== url ? { _rawUrl: rawUrl } : {}) };
 
           if (corsBlocked) {
             crumbData.cors_blocked = true;
@@ -182,7 +188,7 @@ export function installNetworkHook(blackbox) {
 
         if (!ok) {
           const maxBody = config.maxErrorBodyLength || 1024;
-          const errorContext = { status, method, url, duration };
+          const errorContext = { status, method, url, duration, ...(rawUrl !== url ? { _rawUrl: rawUrl } : {}) };
 
           try {
             if (init.body) {

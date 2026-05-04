@@ -28,7 +28,9 @@ export async function bbR2Fetch(input, init = {}, details = {}) {
     url = typeof input === 'string' ? input : input?.url || String(input);
   } catch { /* ignore */ }
 
-  // Strip query (signed URLs carry signing tokens) before logging.
+  // Strip query (signed URLs carry signing tokens) before logging. The raw
+  // URL stays available to registerDiagnostic match functions via the
+  // ephemeral context._rawUrl field below — never persisted.
   let safeUrl = url;
   try { safeUrl = blackbox._stripQueryParams(url) || url; } catch { /* ignore */ }
 
@@ -54,6 +56,7 @@ export async function bbR2Fetch(input, init = {}, details = {}) {
         ...(details.bucket ? { bucket: String(details.bucket).slice(0, 100) } : {}),
         ...(details.key ? { key: String(details.key).slice(0, 200) } : {}),
         error: err?.message || String(err),
+        ...(url !== safeUrl ? { _rawUrl: url } : {}),
       };
       blackbox._addBreadcrumb('network', { method, url: safeUrl, status: 0, duration, ok: false, error: ctx.error, _storage: true });
       blackbox._recordError({
@@ -88,6 +91,7 @@ export async function bbR2Fetch(input, init = {}, details = {}) {
           ...(details.description ? { description: String(details.description).slice(0, 200) } : {}),
           ...(details.bucket ? { bucket: String(details.bucket).slice(0, 100) } : {}),
           ...(details.key ? { key: String(details.key).slice(0, 200) } : {}),
+          ...(url !== safeUrl ? { _rawUrl: url } : {}),
         }
       });
     }

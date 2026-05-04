@@ -7,7 +7,13 @@ const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi
 const NUMERIC_ID_RE = /\/\d+(?=\/|$)/g;
 const HASH_SEGMENT_RE = /\/[a-zA-Z0-9]{15,}(?=\/|$)/g; // long hash-like path segments
 const FILE_WITH_HASH_RE = /\/[^/]*_[a-f0-9]{6,}\.[a-z]{2,4}$/i; // file_abc123.jpg
-const SKIP_FRAMES_RE = /node_modules|webpack|blackbox|__webpack|hot-update|\(native\)|<anonymous>|bbHandleError|console\.wrapped|at wrapped \(|consoleHook|errorHook|networkHook/i;
+// Frames we treat as "framework noise" when extracting a top app frame.
+// IMPORTANT: do NOT match a bare `webpack` token. In Next.js dev mode, every
+// frame (including app code) carries the `webpack-internal:///` prefix —
+// matching `webpack` here would skip ALL frames and leave callerFrame empty.
+// Framework code under that prefix is still caught by the `node_modules`
+// alternation; webpack runtime is caught by `__webpack`.
+const SKIP_FRAMES_RE = /node_modules|blackbox|__webpack|hot-update|\(native\)|<anonymous>|bbHandleError|console\.wrapped|at wrapped \(|consoleHook|errorHook|networkHook/i;
 
 // Frames that indicate framework/vendor code with no app responsibility.
 // If EVERY frame in a stack matches this, the error is "internal" — likely a

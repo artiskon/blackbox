@@ -1,6 +1,6 @@
 import {
   blackbox_default
-} from "./chunk-JFABW74X.js";
+} from "./chunk-TC5I246H.js";
 
 // src/core/hooks/firebaseHook.js
 function permissionDeniedActionHint(documentPath, queryPath, queryDescription) {

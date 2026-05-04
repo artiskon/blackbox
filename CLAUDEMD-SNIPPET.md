@@ -1,4 +1,9 @@
-## BlackBox v1.9.2 — Dev-Time Error Monitoring
+## BlackBox v1.9.3 — Dev-Time Error Monitoring
+
+### What's new in v1.9.3 (three bug fixes from a v1.9.2 dogfood session):
+- **Caller frame on `console.error` now actually populates** in Next.js dev mode. The `extractTopAppFrame` regex was matching a bare `webpack` token, which catches *every* frame in dev (because Next prefixes them all with `webpack-internal:///`). App code was being skipped along with framework code. Removed the bare token; `node_modules` and `__webpack` keep catching the actual framework frames.
+- **`urlReachability: 'tag_content_type_mismatch'` now fires correctly** for URLs whose response depends on query params (signed URLs, `?mode=` selectors). The probe was using the stripped URL (no query); now it uses the raw URL while context/fingerprint stay stripped for privacy/dedup. Pre-1.9.3, an `<img>` pointed at a `?mode=video` endpoint was probed as the bare endpoint and misclassified.
+- **`registerDiagnostic` regex matchers see the raw URL** via two new ephemeral context surfaces: `context._rawSrc` (resource_load) and `context._rawUrl` (network/storage). Underscore-prefixed = ephemeral, in-process-only — visible to matchers, stripped before Firestore persistence and panel report export. New ADR-0021 documents the convention. Function-style match callbacks always saw the full entry; this only changes RegExp matchers.
 
 ### What's new in v1.9.2:
 - **`<img>` / `<script>` content-type mismatch detection.** When a resource probe returns 200 but the body's content-type can't be rendered by the host tag (e.g. `<img>` pointed at `video/mp4` or `application/pdf`), `urlReachability` is now `'tag_content_type_mismatch'` instead of `'ok'`. Context includes `contentType` plus an `action_hint` pointing at the asset-id mapping. Burned an agent ~15 min in v1.8 chasing imaginary CORS.

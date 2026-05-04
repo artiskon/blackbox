@@ -53,6 +53,21 @@ function userKeyFor(errorEntry) {
   return null;
 }
 
+// Underscore-prefixed context keys are an ephemeral, in-process-only
+// convention (see ADR-0021): visible to registerDiagnostic match functions
+// but never persisted. Used to carry raw / privacy-sensitive data
+// (e.g. _rawUrl with query strings + signed tokens) that the matcher needs
+// but the Firestore record must not.
+function stripEphemeralContextKeys(context) {
+  if (!context || typeof context !== 'object') return context;
+  const out = {};
+  for (const [k, v] of Object.entries(context)) {
+    if (k.startsWith('_')) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
 function estimateDocBytes(doc) {
   try {
     return new TextEncoder().encode(JSON.stringify(doc)).length;
@@ -296,7 +311,7 @@ async function _doWrite(errorEntry) {
       url: errorEntry.url,
       path: errorEntry.path,
       breadcrumbs: errorEntry.breadcrumbs || [],
-      context: errorEntry.context || {},
+      context: stripEphemeralContextKeys(errorEntry.context || {}),
       metadata: errorEntry.metadata || {},
       occurrences: errorEntry._storm ? errorEntry._storm.count : 1,
       ...(userKey ? { uniqueUsers: [userKey], uniqueUserCount: 1 } : {}),

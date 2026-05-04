@@ -79,12 +79,18 @@ function _notifySubscribers() {
 function _diagnosticMatches(d, errorEntry) {
   try {
     if (typeof d.match === 'function') return !!d.match(errorEntry);
-    // RegExp tested against the most likely identifying surfaces.
+    // RegExp tested against the most likely identifying surfaces. The
+    // _rawUrl / _rawSrc surfaces are ephemeral (not persisted) and carry
+    // the URL with query params intact — needed when the diagnostic is
+    // keyed off `?mode=foo` / signed-token-bearing URLs that the privacy
+    // strip would otherwise hide from the matcher. See ADR-0021.
     const probes = [
       errorEntry.message || '',
       errorEntry.url || '',
       errorEntry.context?.src || '',
       errorEntry.context?.url || '',
+      errorEntry.context?._rawSrc || '',
+      errorEntry.context?._rawUrl || '',
     ];
     return probes.some(s => s && d.match.test(s));
   } catch {
