@@ -23,6 +23,7 @@ function parseArgs() {
   let pathFilter = null;
   let sourceFilter = null;
   let sinceFilter = null; // ms
+  let statusFilter = null; // number | null
   let includeInternal = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -37,8 +38,11 @@ function parseArgs() {
     else if (a.startsWith('--source=')) { sourceFilter = a.slice(9); }
     else if (a === '--since' && args[i + 1]) { sinceFilter = parseDuration(args[++i]); }
     else if (a.startsWith('--since=')) { sinceFilter = parseDuration(a.slice(8)); }
+    else if (a === '--status' && args[i + 1]) { statusFilter = parseInt(args[++i], 10); }
+    else if (a.startsWith('--status=')) { statusFilter = parseInt(a.slice(9), 10); }
   }
-  return { verbose, id, newOnly, pathFilter, sourceFilter, sinceFilter, includeInternal };
+  if (Number.isNaN(statusFilter)) statusFilter = null;
+  return { verbose, id, newOnly, pathFilter, sourceFilter, sinceFilter, statusFilter, includeInternal };
 }
 
 // Parses "1h", "30m", "2d", "10s" → milliseconds. Anything unrecognized
@@ -109,7 +113,7 @@ async function purgeStaleDocs(db, collectionName, isAdmin) {
 
 async function main() {
   try {
-    const { verbose, id, newOnly, pathFilter, sourceFilter, sinceFilter, includeInternal } = parseArgs();
+    const { verbose, id, newOnly, pathFilter, sourceFilter, sinceFilter, statusFilter, includeInternal } = parseArgs();
     const { db, collectionName, isAdmin } = await connectToFirestore();
 
     // Silent cleanup before the read so the user never sees "queries may be
@@ -174,6 +178,15 @@ async function main() {
     // Filter for --source=network (exact match)
     if (sourceFilter) {
       filteredErrors = filteredErrors.filter(e => e.source === sourceFilter);
+    }
+
+    // Filter for --status=404 — checks context.httpStatus (resource_load,
+    // network errors), context.status (HTTP errors), or storage error status.
+    if (statusFilter !== null) {
+      filteredErrors = filteredErrors.filter(e => {
+        const s = e.context?.httpStatus ?? e.context?.status;
+        return s === statusFilter;
+      });
     }
 
     // Hide framework-internal errors (react-dom warnings, etc) by default —
@@ -348,7 +361,7 @@ async function main() {
     const output = {
       pulledAt: new Date().toISOString(),
       sessionInfo,
-      filters: { pathFilter, sourceFilter, sinceFilter, newOnly, includeInternal },
+      filters: { pathFilter, sourceFilter, sinceFilter, statusFilter, newOnly, includeInternal },
       errorCount: filteredErrors.length,
       uniqueFingerprints: grouped.length,
       hiddenInternalCount: hiddenInternalCount > 0 ? hiddenInternalCount : undefined,

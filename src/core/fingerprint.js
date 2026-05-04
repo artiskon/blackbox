@@ -121,7 +121,7 @@ function normalizeMessage(message) {
   return normalized;
 }
 
-function extractTopAppFrame(stack) {
+export function extractTopAppFrame(stack) {
   if (!stack) return '';
   const lines = stack.split('\n');
   for (const line of lines) {

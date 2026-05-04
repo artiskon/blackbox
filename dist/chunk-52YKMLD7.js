@@ -525,6 +525,7 @@ export {
   __spreadValues,
   __spreadProps,
   __objRest,
+  extractTopAppFrame,
   isStackEntirelyInternal,
   generateFingerprint,
   initPersistence,

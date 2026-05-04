@@ -1,3 +1,5 @@
+import { extractTopAppFrame } from '../fingerprint.js';
+
 export function installConsoleHook(blackbox) {
   const config = blackbox._getConfig();
   const ignorePatterns = config.consoleIgnorePatterns || [];
@@ -68,6 +70,17 @@ export function installConsoleHook(blackbox) {
           if (a.stack) stack = a.stack;
         }
       }
+      // Pull out the first non-framework frame from the captured stack and
+      // surface it as context.callerFrame. For bare console.error("...") with
+      // no Error object, the synthetic stack is otherwise just the BB
+      // wrapper chain — useless in a report. Filtered through the same
+      // SKIP_FRAMES_RE used by fingerprinting, so framework noise doesn't
+      // sneak in. Saves the dev from grepping the codebase for the message
+      // string to find the call site.
+      try {
+        const frame = extractTopAppFrame(stack);
+        if (frame) ctx.callerFrame = frame.replace(/^\s*at\s+/, '').slice(0, 200);
+      } catch { /* ignore */ }
       blackbox._recordError({ message, stack, source: 'console.error', context: ctx });
     } catch { /* BlackBox must never crash the host app */ }
     finally { _recording = false; }

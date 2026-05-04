@@ -185,6 +185,22 @@ export interface BlackBox {
   /** Set the environment label */
   setEnvironment(env: string): void;
 
+  /** Register an app-defined diagnostic that runs on every matching error
+   *  and attaches its result to context.diagnostics[name]. Hard-capped at
+   *  timeoutMs (default 200ms) — design diagnostics to be fast.
+   */
+  registerDiagnostic(
+    name: string,
+    options: {
+      match: RegExp | ((errorEntry: CapturedError) => boolean);
+      run: (errorEntry: CapturedError) => any | Promise<any>;
+      timeoutMs?: number;
+    }
+  ): void;
+
+  /** Remove a previously-registered diagnostic. */
+  unregisterDiagnostic(name: string): void;
+
   /** Tear down BlackBox: remove all hooks, clear timers, reset state. Useful for HMR cleanup. */
   destroy(): void;
 }

@@ -86,6 +86,31 @@ await bbR2Fetch(signedUrl, { method: 'PUT', body: file }, {
 
 The wrapper uses native `fetch` internally so it doesn't double-record with the network hook, and surfaces `bucket`/`key`/`description` in error context.
 
+## App-defined diagnostics (Recommended for opaque-id systems)
+
+When errors point at app-specific state (a missing Cloudflare KV pointer, a stale R2 object, a Firestore doc that should exist) BlackBox can call your probe and embed the result in the error context. Eliminates the "now write a script to check 5 systems" debugging loop.
+
+```javascript
+import blackbox from '@artiskon/blackbox';
+
+blackbox.registerDiagnostic('r2-asset-state', {
+  // String regex tested against message + url + context.src
+  match: /m\.mycdn\.example\/[a-zA-Z0-9]+$/,
+  // OR a function: (errorEntry) => boolean
+  run: async (errorEntry) => {
+    const id = errorEntry.context.src.split('/').pop();
+    return {
+      kv: await checkCloudflareKV(id),
+      r2_public: await headR2Object('public-bucket', id),
+      firestore: await getDoc(doc(db, 'assets', id)).then(d => d.exists()),
+    };
+  },
+  timeoutMs: 200, // default; cap is per-diagnostic
+});
+```
+
+The result lands at `error.context.diagnostics['r2-asset-state']`. Diagnostics that exceed `timeoutMs` get `{error: 'timeout'}` and the slow probe's late result is dropped — design probes to be fast.
+
 ## Firestore Query Context (Recommended for subscriptions)
 
 Pass an optional `description` to `bbOnSnapshot` and BlackBox auto-extracts `queryPath` + `queryFilters` from the queryRef when the subscription emits permission-denied:
@@ -112,6 +137,7 @@ bbOnSnapshot(
 | `npm run bb:check -- --path=/admin/foo` | Only errors fired from a path substring |
 | `npm run bb:check -- --source=storage` | Only errors with the given source (`network`, `storage`, `firebase`, `console.error`, `resource_load`, etc.) |
 | `npm run bb:check -- --since=1h` | Only errors from the last duration (`30s`, `5m`, `2h`, `7d`) |
+| `npm run bb:check -- --status=404` | Only errors with the given HTTP status (matches `context.httpStatus` or `context.status`) |
 | `npm run bb:check -- --include-internal` | Show framework-internal errors (react-dom warnings, Next chunks) — hidden by default |
 | `npm run bb:ack <fingerprint>` | Mute a fingerprint for `--for 7d` (default), with optional `--comment "waiting on X"`. Auto-unmutes when TTL expires |
 | `npm run bb:ack -- --list` | Show currently-muted fingerprints |

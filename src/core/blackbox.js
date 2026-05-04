@@ -33,6 +33,8 @@ let _lastFetchStartTime = 0;
 let _cleanupFns = [];
 let _recentErrors = []; // dedup window: [{norm, time}]
 let _errorStorms = new Map(); // norm → { count, firstSeen, lastEntry }
+let _diagnostics = []; // [{ name, match, run, timeoutMs }]
+const DIAGNOSTIC_DEFAULT_TIMEOUT_MS = 200;
 const ERROR_STORM_WINDOW = 5000;
 const ERROR_STORM_THRESHOLD = 5;
 
@@ -72,6 +74,59 @@ function _notifySubscribers() {
       try { cb(); } catch { /* ignore */ }
     }
   });
+}
+
+function _diagnosticMatches(d, errorEntry) {
+  try {
+    if (typeof d.match === 'function') return !!d.match(errorEntry);
+    // RegExp tested against the most likely identifying surfaces.
+    const probes = [
+      errorEntry.message || '',
+      errorEntry.url || '',
+      errorEntry.context?.src || '',
+      errorEntry.context?.url || '',
+    ];
+    return probes.some(s => s && d.match.test(s));
+  } catch {
+    return false;
+  }
+}
+
+function _runDiagnosticsFor(errorEntry) {
+  if (_diagnostics.length === 0) return;
+  for (const d of _diagnostics) {
+    if (!_diagnosticMatches(d, errorEntry)) continue;
+    const timeoutMs = d.timeoutMs || DIAGNOSTIC_DEFAULT_TIMEOUT_MS;
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      _attachDiagnosticResult(errorEntry, d.name, { error: 'timeout', timeoutMs });
+    }, timeoutMs);
+    Promise.resolve().then(() => d.run(errorEntry)).then(
+      result => {
+        if (settled) return; // timeout fired first — drop late result
+        settled = true;
+        clearTimeout(timer);
+        _attachDiagnosticResult(errorEntry, d.name, result);
+      },
+      err => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        _attachDiagnosticResult(errorEntry, d.name, { error: err?.message || String(err) });
+      }
+    );
+  }
+}
+
+function _attachDiagnosticResult(errorEntry, name, result) {
+  try {
+    if (!errorEntry.context) errorEntry.context = {};
+    if (!errorEntry.context.diagnostics) errorEntry.context.diagnostics = {};
+    errorEntry.context.diagnostics[name] = result;
+    _notifySubscribers();
+  } catch { /* ignore */ }
 }
 
 const blackbox = {
@@ -246,6 +301,39 @@ const blackbox = {
   setUser(userInfo) {
     if (!_initialized) return;
     _config.user = userInfo;
+  },
+
+  /**
+   * Register an app-defined diagnostic that runs on every matching error
+   * and attaches its result to the error's context.diagnostics[name].
+   *
+   * Closes the "I had to write 5 ad-hoc probe scripts to diagnose one
+   * asset URL" gap an agent reported in a v1.8 session — the app knows
+   * how to check its own state (KV, R2 buckets, Firestore docs); BB
+   * just needs a hook to run that check and embed the result.
+   *
+   * @param {string} name    Result key under context.diagnostics.
+   * @param {object} options
+   * @param {RegExp|Function} options.match  RegExp tested against the error
+   *   message + url + context.src, OR a function (errorEntry) => boolean.
+   * @param {Function} options.run  async (errorEntry) => any. Result is
+   *   attached verbatim. Keep it small and fast — capped at timeoutMs.
+   * @param {number} [options.timeoutMs=200]  Hard cap; on timeout the entry
+   *   gets {error: 'timeout'} and the run keeps going in the background
+   *   (its result is dropped).
+   */
+  registerDiagnostic(name, { match, run, timeoutMs = DIAGNOSTIC_DEFAULT_TIMEOUT_MS } = {}) {
+    if (typeof name !== 'string' || !name) return;
+    if (typeof run !== 'function') return;
+    if (!(match instanceof RegExp) && typeof match !== 'function') return;
+    // Replace any existing diagnostic with the same name so re-registering
+    // during HMR doesn't accumulate duplicates.
+    _diagnostics = _diagnostics.filter(d => d.name !== name);
+    _diagnostics.push({ name, match, run, timeoutMs });
+  },
+
+  unregisterDiagnostic(name) {
+    _diagnostics = _diagnostics.filter(d => d.name !== name);
   },
 
   setTag(key, value) {
@@ -587,6 +675,12 @@ const blackbox = {
       // Link the recent-dedup slot so cross-channel fires append to firedAs
       recentSlot.entry = entry;
 
+      // Fire any matching app-registered diagnostics in the background.
+      // Results land on entry.context.diagnostics[name] when they resolve;
+      // if they take longer than timeoutMs, the entry shows {error:'timeout'}
+      // and the actual result is dropped (no orphan writes).
+      _runDiagnosticsFor(entry);
+
       // Link storm tracker to this entry so future hits update it
       const stormEntry = _errorStorms.get(norm);
       if (stormEntry) stormEntry.lastEntry = entry;
@@ -731,6 +825,7 @@ const blackbox = {
     _lastFetchStartTime = 0;
     _recentErrors = [];
     _errorStorms = new Map();
+    _diagnostics = [];
     for (const id of _pendingSilenceChecks) clearTimeout(id);
     _pendingSilenceChecks = [];
     if (_flushTimer) clearInterval(_flushTimer);

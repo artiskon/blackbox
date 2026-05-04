@@ -1,4 +1,12 @@
-## BlackBox v1.9.1 — Dev-Time Error Monitoring
+## BlackBox v1.9.2 — Dev-Time Error Monitoring
+
+### What's new in v1.9.2:
+- **`<img>` / `<script>` content-type mismatch detection.** When a resource probe returns 200 but the body's content-type can't be rendered by the host tag (e.g. `<img>` pointed at `video/mp4` or `application/pdf`), `urlReachability` is now `'tag_content_type_mismatch'` instead of `'ok'`. Context includes `contentType` plus an `action_hint` pointing at the asset-id mapping. Burned an agent ~15 min in v1.8 chasing imaginary CORS.
+- **Caller frame on bare `console.error`.** The first non-framework JS frame from the call site lands in `context.callerFrame` (e.g. `MediaLibrary.tsx:746:50`). No more grepping the codebase for the message string to find the call site.
+- **`bb-check --status=N`** — filter errors by HTTP status (`context.httpStatus` or `context.status`). Pairs with `--source=resource_load` for "show me only the 404s on R2".
+- **`action_hint` on Firestore permission-denied** — every permission-denied error from `bbFirestoreOp` / `bbOnSnapshot` / `bbWrapWrites` now carries an `action_hint` pointing at `firestore.rules` and the rejected path. Mirrors the `action_url` pattern that consumers praised on the Firestore-index error.
+- **`blackbox.registerDiagnostic(name, { match, run, timeoutMs })`** — pluggable app-defined diagnostics. App registers a probe for a URL pattern (or any predicate); BB invokes it on matching errors and attaches the result to `context.diagnostics[name]`. Closes the "I had to write 5 ad-hoc probe scripts to diagnose one asset URL" gap. Hard-capped at 200ms by default — design diagnostics to be fast.
+- **Error breadcrumb messages** in the panel report bumped 60 → 200 chars and any embedded URL is middle-truncated, so both the host and unique tail survive (was chopping mid-host like `https://m.host.exam`).
 
 ### What's new in v1.9.1:
 - **SSR fix:** `bbWrapWrites`, `bbR2Fetch`, and the Firebase helpers can now be imported and called from server-side code (Next.js App Router route handlers, server components, shared services). Two changes: (1) the blanket `'use client'` banner that tsup applied to every dist entry was removed — only the components subpath carries the directive now, where it belongs; (2) `bbWrapWrites` short-circuits to a passthrough on the server (`typeof window === 'undefined'` returns the input fns unchanged), so a single top-level call works for both client and server consumers without a `typeof window` guard at the call site. Caught in v1.9.0 by an agent debugging `/api/admin/clear-cache`.

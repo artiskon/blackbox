@@ -216,7 +216,11 @@ function BlackBoxPanel() {
         out.req = `${bc.method || 'GET'} ${shortenUrl(bc.url || '', 80)} → ${bc.status || '?'}`;
         if (bc.duration) out.ms = bc.duration;
       } else if (bc.type === 'error') {
-        out.msg = (bc.message || '').slice(0, 60);
+        // Bumped from 60 → 200 chars and middle-truncate any URL in the
+        // message so the host AND unique tail survive (a 60-char slice was
+        // chopping resource_load messages mid-host: "...img - https://m.host.exam").
+        const raw = (bc.message || '').slice(0, 200);
+        out.msg = raw.replace(/https?:\/\/\S+/g, u => shortenUrl(u, 80));
         if (bc.source) out.source = bc.source;
       } else if (bc.type === 'suspicious_silence') {
         const el = bc.clickedElement;
@@ -313,7 +317,7 @@ function BlackBoxPanel() {
     // -- Build report --
     const report = stripNulls({
       _type: 'BlackBox Diagnostic Report',
-      _version: '1.9.1',
+      _version: '1.9.2',
       _generatedAt: new Date().toISOString(),
       _instructions: 'Errors are deduplicated (count = occurrences). Breadcrumbs are the single chronological trail of user actions for the session. Silences are buttons clicked with no followup (possible broken UI). History contains persisted errors from Firestore (grouped by fingerprint). Health is a 24h summary. Errors with internal:true had a stack of only framework frames — they are usually framework warnings, not app bugs. urlReachability on resource_load tells you DNS vs CORS vs HTTP failure at a glance.',
       session: stripNulls({

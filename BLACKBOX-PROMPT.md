@@ -75,6 +75,7 @@ Useful flags:
 - `npm run bb:check -- --path=/admin/foo` — filter by path substring
 - `npm run bb:check -- --source=storage` — filter by source (`network`, `storage`, `firebase`, `console.error`, `resource_load`, etc.)
 - `npm run bb:check -- --since=1h` — last hour (also `30s`, `5m`, `2h`, `7d`)
+- `npm run bb:check -- --status=404` — filter by HTTP status (against `context.httpStatus`/`context.status`)
 - `npm run bb:check -- --include-internal` — show framework-internal errors (react-dom warnings, Next chunks). Hidden by default
 
 The output also includes a `correlations` block. Pay attention to:
@@ -90,8 +91,8 @@ When fixing errors found by BlackBox:
 - Errors with high `occurrences` are systemic — fix those first. Also check `uniqueUserCount` to tell one-user bugs from everyone-bugs
 - Look at the FULL breadcrumb trail. The cause is usually 2-5 actions before the crash
 - Errors sharing the same page path + session are likely related (one root cause). Look at the `correlations` block in the report for cross-error grouping
-- `resource_load` errors include `urlReachability`: `'ok'` (server returned 2xx — failure was image decode/CORS during render), `'http_error'` (server returned 4xx/5xx — see `httpStatus`), `'opaque_response'` (reachable but status couldn't be read client-side — check the Network tab for the real status), `'unreachable_origin'` (DNS / TLS / connection refused — hostname is dead). Probes also capture `responseHeaders` (cf-ray, content-type, etc.) and `responseBodyPreview` (first 200 bytes)
-- `console.error` errors from Firebase include `context.code` (e.g., `permission-denied`, `not-found`). If the error came through `bbOnSnapshot`/`bbFirestoreOp`/`bbWrapWrites`, it also has `queryPath`, `queryFilters`, or `documentPath`
+- `resource_load` errors include `urlReachability`: `'ok'` (server returned 2xx — failure was image decode), `'http_error'` (server returned 4xx/5xx — see `httpStatus`), `'tag_content_type_mismatch'` (server returned 200 but the body is the wrong KIND for the host tag — `<img>` got `video/mp4` etc.; see `contentType` and `action_hint`), `'opaque_response'` (reachable but status couldn't be read client-side — check the Network tab), `'unreachable_origin'` (DNS / TLS / connection refused — hostname is dead). Probes also capture `responseHeaders` (cf-ray, content-type, etc.) and `responseBodyPreview` (first 200 bytes)
+- `console.error` errors include `context.callerFrame` — the first non-framework JS frame from the call site (e.g. `MediaLibrary.tsx:746:50`). Skips the `console.error` codebase grep step. From Firebase, errors also include `context.code` (e.g., `permission-denied`, `not-found`); if routed through `bbOnSnapshot`/`bbFirestoreOp`/`bbWrapWrites` the context also has `queryPath`, `queryFilters`, `documentPath`, and (on permission-denied) an `action_hint` pointing at `firestore.rules`
 - Errors with `lastSeenSessionId` different from current session may be stale. Compare `metadata.buildSha` to current commit to confirm
 - Errors with `internal: true` had a stack of only framework frames — usually framework warnings, not app bugs. Ignore unless `--include-internal` shows they're spiking
 
@@ -152,6 +153,7 @@ Helpers (import from `@artiskon/blackbox`; all SSR-safe — root entry has no `'
 - `bbTrackAuth(auth)` — Firebase Auth state-change breadcrumbs
 - `blackbox.setUser({ id, role })` — attribute errors to a user (drives `uniqueUserCount`)
 - `blackbox.setEnvironment(env)` / `blackbox.setTag(k, v)` — context tagging
+- `blackbox.registerDiagnostic(name, { match, run, timeoutMs })` — pluggable app-defined probe. `match` is a `RegExp` tested against message/url/context.src OR a function `(errorEntry) => boolean`. `run` returns extra context attached to `error.context.diagnostics[name]`. Capped at `timeoutMs` (default 200ms)
 
 Components (import from `@artiskon/blackbox/components` — this subpath carries `'use client'`):
 - `BlackBoxPanel` — floating debug panel

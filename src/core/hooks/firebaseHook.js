@@ -1,5 +1,15 @@
 import blackbox from '../blackbox.js';
 
+// When a Firebase error is permission-denied, attach a generic action_hint
+// that tells the dev WHERE to look — the rules file plus the rejected path.
+// Mirrors the existing Firestore-index URL pattern that consumers praised
+// as the gold standard. Caller passes the inferred path/queryDescription.
+function permissionDeniedActionHint(documentPath, queryPath, queryDescription) {
+  const target = documentPath || queryPath || 'the rejected path';
+  const desc = queryDescription ? ` (${queryDescription})` : '';
+  return `Open firestore.rules and verify a matching match{} block grants the requesting user access to ${target}${desc}. Check the user's auth state and any role/uid fields the rule reads.`;
+}
+
 /**
  * Best-effort introspection of a Firestore Query / CollectionReference.
  * Reads the SDK's internal `_query` / `_path` shapes — these are stable in
@@ -86,6 +96,9 @@ export async function bbFirestoreOp(operationName, promise, details = {}) {
           ctx.writeFields = keys.slice(0, 20);
           if (undefinedKeys.length > 0) ctx.undefinedFields = undefinedKeys;
         } catch { /* ignore */ }
+      }
+      if (error.code === 'permission-denied') {
+        ctx.action_hint = permissionDeniedActionHint(ctx.documentPath, ctx.queryPath, ctx.queryDescription);
       }
       blackbox._recordError({
         message: `Firestore ${operationName} failed: ${error.message || error.code}`,
@@ -227,6 +240,9 @@ export function bbWrapWrites(firestoreFns) {
                   }
                 } catch { /* ignore */ }
               }
+              if (err?.code === 'permission-denied') {
+                ctx.action_hint = permissionDeniedActionHint(path, null, null);
+              }
               blackbox._recordError({
                 message: `Firestore ${op} failed: ${err?.message || err?.code || err}`,
                 stack: err?.stack || '',
@@ -285,6 +301,9 @@ export async function bbOnSnapshot(queryRef, onNext, onError, opts = {}) {
               ctx.queryPath = queryRef.path.slice(0, 200);
             }
           } catch { /* ignore */ }
+          if (error.code === 'permission-denied') {
+            ctx.action_hint = permissionDeniedActionHint(null, ctx.queryPath, ctx.queryDescription);
+          }
           blackbox._recordError({
             message: `Firestore listener error: ${error.message || error.code}`,
             stack: error.stack || '',

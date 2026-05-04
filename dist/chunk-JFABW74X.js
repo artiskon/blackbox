@@ -3,6 +3,7 @@ import {
   __spreadProps,
   __spreadValues,
   _resetPersistence,
+  extractTopAppFrame,
   generateFingerprint,
   getCollectionRef,
   getFirestoreFunctions,
@@ -10,7 +11,7 @@ import {
   initPersistence,
   isCircuitOpen,
   isStackEntirelyInternal
-} from "./chunk-OYTJZ5FQ.js";
+} from "./chunk-52YKMLD7.js";
 
 // src/core/constants.js
 var DEFAULTS = {
@@ -326,6 +327,11 @@ function installConsoleHook(blackbox2) {
           if (a.path) ctx.path = a.path;
           if (a.stack) stack = a.stack;
         }
+      }
+      try {
+        const frame = extractTopAppFrame(stack);
+        if (frame) ctx.callerFrame = frame.replace(/^\s*at\s+/, "").slice(0, 200);
+      } catch (e) {
       }
       blackbox2._recordError({ message, stack, source: "console.error", context: ctx });
     } catch (e) {
@@ -654,6 +660,22 @@ function installResourceHook(blackbox2) {
     }
     return Object.keys(out).length > 0 ? out : null;
   }
+  const TAG_CONTENT_TYPES = {
+    img: /^image\//i,
+    script: /^(application|text)\/(javascript|ecmascript|json)/i,
+    link: /^text\/css/i,
+    video: /^video\//i,
+    audio: /^audio\//i,
+    source: /^(video|audio|image)\//i
+  };
+  function detectTagMismatch(tag, contentType) {
+    if (!contentType || !tag) return null;
+    const expected = TAG_CONTENT_TYPES[tag];
+    if (!expected) return null;
+    const ct = contentType.split(";")[0].trim();
+    if (expected.test(ct)) return null;
+    return ct;
+  }
   const handler = (event) => {
     var _a, _b;
     try {
@@ -716,7 +738,15 @@ function installResourceHook(blackbox2) {
             httpStatus: res.status
           }, headers ? { responseHeaders: headers } : {}), bodyPreview ? { responseBodyPreview: bodyPreview } : {});
           if (res.status >= 200 && res.status < 400) {
-            emit("ok", extra);
+            const mismatchType = detectTagMismatch(tagName, headers == null ? void 0 : headers["content-type"]);
+            if (mismatchType) {
+              emit("tag_content_type_mismatch", __spreadProps(__spreadValues({}, extra), {
+                contentType: mismatchType,
+                action_hint: `<${tagName}> tag received "${mismatchType}" \u2014 element rendered the wrong KIND of file. Check the asset-id / URL mapping at the call site.`
+              }));
+            } else {
+              emit("ok", extra);
+            }
           } else {
             emit("http_error", extra);
           }
@@ -841,6 +871,8 @@ var _lastFetchStartTime = 0;
 var _cleanupFns = [];
 var _recentErrors = [];
 var _errorStorms = /* @__PURE__ */ new Map();
+var _diagnostics = [];
+var DIAGNOSTIC_DEFAULT_TIMEOUT_MS = 200;
 var ERROR_STORM_WINDOW = 5e3;
 var ERROR_STORM_THRESHOLD = 5;
 function _stripQueryParams(url) {
@@ -878,6 +910,57 @@ function _notifySubscribers() {
       }
     }
   });
+}
+function _diagnosticMatches(d, errorEntry) {
+  var _a, _b;
+  try {
+    if (typeof d.match === "function") return !!d.match(errorEntry);
+    const probes = [
+      errorEntry.message || "",
+      errorEntry.url || "",
+      ((_a = errorEntry.context) == null ? void 0 : _a.src) || "",
+      ((_b = errorEntry.context) == null ? void 0 : _b.url) || ""
+    ];
+    return probes.some((s) => s && d.match.test(s));
+  } catch (e) {
+    return false;
+  }
+}
+function _runDiagnosticsFor(errorEntry) {
+  if (_diagnostics.length === 0) return;
+  for (const d of _diagnostics) {
+    if (!_diagnosticMatches(d, errorEntry)) continue;
+    const timeoutMs = d.timeoutMs || DIAGNOSTIC_DEFAULT_TIMEOUT_MS;
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      _attachDiagnosticResult(errorEntry, d.name, { error: "timeout", timeoutMs });
+    }, timeoutMs);
+    Promise.resolve().then(() => d.run(errorEntry)).then(
+      (result) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        _attachDiagnosticResult(errorEntry, d.name, result);
+      },
+      (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        _attachDiagnosticResult(errorEntry, d.name, { error: (err == null ? void 0 : err.message) || String(err) });
+      }
+    );
+  }
+}
+function _attachDiagnosticResult(errorEntry, name, result) {
+  try {
+    if (!errorEntry.context) errorEntry.context = {};
+    if (!errorEntry.context.diagnostics) errorEntry.context.diagnostics = {};
+    errorEntry.context.diagnostics[name] = result;
+    _notifySubscribers();
+  } catch (e) {
+  }
 }
 var blackbox = {
   init(options = {}) {
@@ -1031,6 +1114,35 @@ var blackbox = {
     if (!_initialized) return;
     _config.user = userInfo;
   },
+  /**
+   * Register an app-defined diagnostic that runs on every matching error
+   * and attaches its result to the error's context.diagnostics[name].
+   *
+   * Closes the "I had to write 5 ad-hoc probe scripts to diagnose one
+   * asset URL" gap an agent reported in a v1.8 session — the app knows
+   * how to check its own state (KV, R2 buckets, Firestore docs); BB
+   * just needs a hook to run that check and embed the result.
+   *
+   * @param {string} name    Result key under context.diagnostics.
+   * @param {object} options
+   * @param {RegExp|Function} options.match  RegExp tested against the error
+   *   message + url + context.src, OR a function (errorEntry) => boolean.
+   * @param {Function} options.run  async (errorEntry) => any. Result is
+   *   attached verbatim. Keep it small and fast — capped at timeoutMs.
+   * @param {number} [options.timeoutMs=200]  Hard cap; on timeout the entry
+   *   gets {error: 'timeout'} and the run keeps going in the background
+   *   (its result is dropped).
+   */
+  registerDiagnostic(name, { match, run, timeoutMs = DIAGNOSTIC_DEFAULT_TIMEOUT_MS } = {}) {
+    if (typeof name !== "string" || !name) return;
+    if (typeof run !== "function") return;
+    if (!(match instanceof RegExp) && typeof match !== "function") return;
+    _diagnostics = _diagnostics.filter((d) => d.name !== name);
+    _diagnostics.push({ name, match, run, timeoutMs });
+  },
+  unregisterDiagnostic(name) {
+    _diagnostics = _diagnostics.filter((d) => d.name !== name);
+  },
   setTag(key, value) {
     if (!_initialized) return;
     if (!_config.tags) _config.tags = {};
@@ -1072,7 +1184,7 @@ var blackbox = {
   // --- Firestore query methods for the UI panel ---
   async queryPersistedErrors(limit = 50) {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-CDJ5BGBX.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-NZ4BYG7D.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { errors: [], connected: false };
@@ -1111,7 +1223,7 @@ var blackbox = {
   },
   async queryHealth() {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-CDJ5BGBX.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-NZ4BYG7D.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { connected: false };
@@ -1149,7 +1261,7 @@ var blackbox = {
   },
   async queryTimeline(minutes = 5) {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-CDJ5BGBX.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-NZ4BYG7D.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { events: [], connected: false };
@@ -1178,7 +1290,7 @@ var blackbox = {
   },
   async clearPersistedErrors() {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-CDJ5BGBX.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-NZ4BYG7D.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref || !fns.deleteDoc) return { success: false, error: "Not connected to Firestore" };
@@ -1297,6 +1409,7 @@ var blackbox = {
       _errors.push(entry);
       if (_errors.length > 50) _errors.shift();
       recentSlot.entry = entry;
+      _runDiagnosticsFor(entry);
       const stormEntry = _errorStorms.get(norm);
       if (stormEntry) stormEntry.lastEntry = entry;
       blackbox._addBreadcrumb("error", { message: truncatedMessage, source });
@@ -1426,6 +1539,7 @@ var blackbox = {
     _lastFetchStartTime = 0;
     _recentErrors = [];
     _errorStorms = /* @__PURE__ */ new Map();
+    _diagnostics = [];
     for (const id of _pendingSilenceChecks) clearTimeout(id);
     _pendingSilenceChecks = [];
     if (_flushTimer) clearInterval(_flushTimer);

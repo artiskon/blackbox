@@ -1,8 +1,13 @@
 import {
   blackbox_default
-} from "./chunk-7C3ST46F.js";
+} from "./chunk-JFABW74X.js";
 
 // src/core/hooks/firebaseHook.js
+function permissionDeniedActionHint(documentPath, queryPath, queryDescription) {
+  const target = documentPath || queryPath || "the rejected path";
+  const desc = queryDescription ? ` (${queryDescription})` : "";
+  return `Open firestore.rules and verify a matching match{} block grants the requesting user access to ${target}${desc}. Check the user's auth state and any role/uid fields the rule reads.`;
+}
 function describeQueryRef(queryRef) {
   var _a, _b, _c;
   if (!queryRef) return null;
@@ -69,6 +74,9 @@ async function bbFirestoreOp(operationName, promise, details = {}) {
           if (undefinedKeys.length > 0) ctx.undefinedFields = undefinedKeys;
         } catch (e) {
         }
+      }
+      if (error.code === "permission-denied") {
+        ctx.action_hint = permissionDeniedActionHint(ctx.documentPath, ctx.queryPath, ctx.queryDescription);
       }
       blackbox_default._recordError({
         message: `Firestore ${operationName} failed: ${error.message || error.code}`,
@@ -171,6 +179,9 @@ function bbWrapWrites(firestoreFns) {
                 } catch (e) {
                 }
               }
+              if ((err == null ? void 0 : err.code) === "permission-denied") {
+                ctx.action_hint = permissionDeniedActionHint(path, null, null);
+              }
               blackbox_default._recordError({
                 message: `Firestore ${op} failed: ${(err == null ? void 0 : err.message) || (err == null ? void 0 : err.code) || err}`,
                 stack: (err == null ? void 0 : err.stack) || "",
@@ -236,6 +247,9 @@ async function bbOnSnapshot(queryRef, onNext, onError, opts = {}) {
               ctx.queryPath = queryRef.path.slice(0, 200);
             }
           } catch (e) {
+          }
+          if (error.code === "permission-denied") {
+            ctx.action_hint = permissionDeniedActionHint(null, ctx.queryPath, ctx.queryDescription);
           }
           blackbox_default._recordError({
             message: `Firestore listener error: ${error.message || error.code}`,

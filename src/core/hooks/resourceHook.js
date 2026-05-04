@@ -41,15 +41,42 @@ export function installResourceHook(blackbox) {
   }
 
   // Reachability is the single most-asked field from this hook. Values:
-  //   'ok'                — server responded 2xx/3xx (probable img-decode issue)
-  //   'http_error'        — server responded 4xx/5xx (status in httpStatus)
-  //   'opaque_response'   — server responded but cors prevented status read.
-  //                          DOES NOT mean CORS is the cause — a 404 served
-  //                          without CORS headers also lands here. Caller
-  //                          should check the Network tab to disambiguate.
-  //                          (Replaces the old, misleading 'cors_blocked'.)
-  //   'unreachable_origin'— DNS / TLS / connection refused (origin doesn't answer)
-  //   'unknown'           — couldn't probe (data: URL, relative path, etc.)
+  //   'ok'                       — server responded 2xx/3xx (probable img-decode issue)
+  //   'http_error'               — server responded 4xx/5xx (status in httpStatus)
+  //   'tag_content_type_mismatch'— server returned 200 but the content-type can't
+  //                                  be rendered by the host tag (e.g. <img src>
+  //                                  pointed at video/mp4 or application/pdf).
+  //                                  Common when an asset-id mapping renders the
+  //                                  wrong file in the wrong element. Burned an
+  //                                  agent ~15 min in BB-1.8 chasing CORS.
+  //   'opaque_response'          — server responded but cors prevented status read.
+  //                                  DOES NOT mean CORS is the cause — a 404 served
+  //                                  without CORS headers also lands here. Caller
+  //                                  should check the Network tab to disambiguate.
+  //                                  (Replaces the old, misleading 'cors_blocked'.)
+  //   'unreachable_origin'       — DNS / TLS / connection refused (origin doesn't answer)
+  //   'unknown'                  — couldn't probe (data: URL, relative path, etc.)
+
+  // Maps each tag to the content-type families it can actually render. Used to
+  // detect "img tag receiving video bytes" mismatches once we have the probe's
+  // content-type header.
+  const TAG_CONTENT_TYPES = {
+    img: /^image\//i,
+    script: /^(application|text)\/(javascript|ecmascript|json)/i,
+    link: /^text\/css/i,
+    video: /^video\//i,
+    audio: /^audio\//i,
+    source: /^(video|audio|image)\//i,
+  };
+  function detectTagMismatch(tag, contentType) {
+    if (!contentType || !tag) return null;
+    const expected = TAG_CONTENT_TYPES[tag];
+    if (!expected) return null;
+    // Strip parameters (charset etc.) — just the type/subtype matters here.
+    const ct = contentType.split(';')[0].trim();
+    if (expected.test(ct)) return null;
+    return ct;
+  }
   const handler = (event) => {
     try {
       const target = event.target;
@@ -129,7 +156,21 @@ export function installResourceHook(blackbox) {
             ...(bodyPreview ? { responseBodyPreview: bodyPreview } : {}),
           };
           if (res.status >= 200 && res.status < 400) {
-            emit('ok', extra);
+            // 200 OK but the body might still be the wrong KIND for the tag
+            // — e.g. an image-id mapping bug that puts video bytes into <img>.
+            // The browser raises a generic resource-load error event with no
+            // status; without this check BB would've labeled it 'ok' and
+            // sent the dev down the wrong rabbit hole.
+            const mismatchType = detectTagMismatch(tagName, headers?.['content-type']);
+            if (mismatchType) {
+              emit('tag_content_type_mismatch', {
+                ...extra,
+                contentType: mismatchType,
+                action_hint: `<${tagName}> tag received "${mismatchType}" — element rendered the wrong KIND of file. Check the asset-id / URL mapping at the call site.`,
+              });
+            } else {
+              emit('ok', extra);
+            }
           } else {
             emit('http_error', extra);
           }

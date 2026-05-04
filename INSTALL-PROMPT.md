@@ -73,6 +73,8 @@ Do NOT modify any BlackBox source files. Just install, wire up, and verify.
 
 - **Add `description` to `bbOnSnapshot` calls** so permission-denied errors carry a human-readable label of which query was rejected — auto-extracted query path + filters come along for free.
 
+- **Register diagnostics for opaque-id assets.** If the app serves files via a URL pattern like `/assets/{id}` and resolution involves multiple systems (Cloudflare KV → R2 → Firestore), register a `blackbox.registerDiagnostic(name, { match: /pattern/, run })` so failed loads automatically embed the full system state in the error context instead of forcing a manual probe-script-writing session.
+
 ## Updating BlackBox
 
 To pull the latest version of BlackBox, run:
