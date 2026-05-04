@@ -2,6 +2,20 @@
 
 This is the source of the `@artiskon/blackbox` npm package. It's a git submodule consumed by parent apps (which install it from GitHub or via the local submodule path).
 
+## CRITICAL RULE: check the decision log before acting on feedback
+
+Every non-trivial design choice in this package is recorded as an ADR in [`docs/decisions/`](docs/decisions/). **Before acting on new BB feedback, search that directory for the relevant area first.**
+
+If a relevant ADR exists, the new feedback is one of:
+
+- **(a) New use case the existing decision didn't cover** → ship as additive, cite the ADR in your commit
+- **(b) Regression of a known trade-off** → write a *superseding* ADR with explicit reversal rationale, mark the old ADR `Status: superseded by NNNN`
+- **(c) Disagreement on a deliberate non-decision** (a "deferred" ADR) → confirm the original reasoning still applies before flipping
+
+**Never silently reverse a prior decision because the latest agent didn't see the rationale.** That's the failure mode the log exists to prevent.
+
+If you ship a behavior change that touches an ADR area, update or supersede the ADR in the same commit. The "update related docs with every code edit" rule applies to ADRs too.
+
 ## CRITICAL RULE: update related docs with every code edit
 
 **After every code edit, before declaring the work done, ask: does this change anything a user (developer or AI assistant) would read in a doc? If yes, the doc update is part of the SAME change, not a follow-up.**
