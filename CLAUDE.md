@@ -37,3 +37,13 @@ This rule has been violated repeatedly across v1.8.0 → v1.9.0. `CLAUDEMD-SNIPP
 ## CLI tools live in `src/cli/`
 
 `bb-check`, `bb-health`, `bb-timeline`, `bb-clear`, `bb-ack`. These are bin entries in `package.json` and run as plain `.js` (not built). Don't add a transpilation step for them.
+
+## Monitor: launch freely, signal at end of reply
+
+When a Monitor task is the right tool, **just launch it**. Don't preface with "I'll arm a Monitor", don't pause to confirm, don't suggest alternatives. After launching, end the reply with this exact line rendered as a level-1 heading (big + bold):
+
+```
+# **Don't Close Chat, Monitor in Process**
+```
+
+This applies to any reply where a Monitor task is armed in that turn (or carries over from a prior turn). Skip any "Monitor armed" / "awaiting events" preamble — go straight from the work into the heading. Bash `run_in_background` does NOT trigger this — only Monitor does.
