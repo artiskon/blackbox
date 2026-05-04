@@ -19,6 +19,10 @@ blackbox.init({
   firestoreFns: { collection, addDoc, updateDoc, deleteDoc, query, where, limit, getDocs, serverTimestamp, Timestamp }
 });
 
+// Optional but recommended: identify the user so uniqueUserCount works
+// and you can tell one-user bugs from everyone-bugs.
+blackbox.setUser({ id: currentUser.uid, role: currentUser.role });
+
 function App() {
   return (
     <BlackBoxProvider>
@@ -37,7 +41,8 @@ Add these scripts to your `package.json`:
     "bb:check": "bb-check",
     "bb:health": "bb-health",
     "bb:timeline": "bb-timeline",
-    "bb:clear": "bb-clear"
+    "bb:clear": "bb-clear",
+    "bb:ack": "bb-ack"
   }
 }
 ```
@@ -51,14 +56,64 @@ import { auth } from './firebase';
 bbTrackAuth(auth);
 ```
 
+## Auto-instrumented Firestore writes (Recommended)
+
+Silent permission-denied on `deleteDoc` / `setDoc` / `updateDoc` / `addDoc` is invisible to BlackBox unless the caller adds `.catch()`. Wrap the write functions once at import time and use the wrapped versions throughout the app — every silent rejection becomes a BlackBox error with the document path and Firestore error code:
+
+```javascript
+import { addDoc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { bbWrapWrites } from '@artiskon/blackbox';
+
+const fs = bbWrapWrites({ addDoc, setDoc, updateDoc, deleteDoc });
+// use fs.addDoc / fs.deleteDoc / etc. in your app code
+```
+
+## Object Storage Wrapper (Cloudflare R2 / S3 / GCS)
+
+Tag fetches against object storage so failures filter cleanly with `bb-check --source=storage` instead of getting lost in generic network noise:
+
+```javascript
+import { bbR2Fetch } from '@artiskon/blackbox';
+
+await bbR2Fetch(signedUrl, { method: 'PUT', body: file }, {
+  description: 'upload avatar',
+  bucket: 'my-private-bucket',
+  key: `users/${uid}/avatar.jpg`,
+});
+```
+
+The wrapper uses native `fetch` internally so it doesn't double-record with the network hook, and surfaces `bucket`/`key`/`description` in error context.
+
+## Firestore Query Context (Recommended for subscriptions)
+
+Pass an optional `description` to `bbOnSnapshot` and BlackBox auto-extracts `queryPath` + `queryFilters` from the queryRef when the subscription emits permission-denied:
+
+```javascript
+import { bbOnSnapshot } from '@artiskon/blackbox/firebase';
+
+bbOnSnapshot(
+  query(collection(db, 'prompts'), where('ownerOnly', '==', false)),
+  snap => render(snap),
+  err => handle(err),
+  { description: 'agency prompts where ownerOnly==false' }
+);
+```
+
 ## CLI Tools
 
 | Command | Description |
 |---------|-------------|
-| `npm run bb:check` | Pull latest errors from Firestore into `dev-logs/blackbox.json` |
+| `npm run bb:check` | Pull latest errors from Firestore into `dev-logs/blackbox.json` (silently drops docs >7d at the start of each run) |
 | `npm run bb:check -- --verbose` | Full messages, paths, and context |
-| `npm run bb:check -- --id <fingerprint>` | Full detail for a single error |
+| `npm run bb:check -- --id <fingerprint>` | Full detail for a single error (stack, breadcrumbs, context) |
 | `npm run bb:check -- --new` | Only errors since last check |
+| `npm run bb:check -- --path=/admin/foo` | Only errors fired from a path substring |
+| `npm run bb:check -- --source=storage` | Only errors with the given source (`network`, `storage`, `firebase`, `console.error`, `resource_load`, etc.) |
+| `npm run bb:check -- --since=1h` | Only errors from the last duration (`30s`, `5m`, `2h`, `7d`) |
+| `npm run bb:check -- --include-internal` | Show framework-internal errors (react-dom warnings, Next chunks) — hidden by default |
+| `npm run bb:ack <fingerprint>` | Mute a fingerprint for `--for 7d` (default), with optional `--comment "waiting on X"`. Auto-unmutes when TTL expires |
+| `npm run bb:ack -- --list` | Show currently-muted fingerprints |
+| `npm run bb:ack <fingerprint> -- --clear` | Remove the mute |
 | `npm run bb:health` | Generate a health summary with HEALTHY/WARNING/UNHEALTHY verdict |
 | `npm run bb:timeline` | Dump recent activity timeline to `dev-logs/bb-timeline.json` |
 | `npm run bb:clear` | Clear old error data from Firestore and local dev-logs |
@@ -98,6 +153,10 @@ BlackBox is designed with privacy as a default:
 | `consoleIgnorePatterns` | `[...]` | Console messages matching these patterns are silently dropped |
 | `errorExcludePatterns` | `[]` | Errors matching these patterns are dropped entirely (e.g. `['fbcdn.net']`) |
 | `firestoreFns` | `null` | Pass Firestore SDK functions to avoid module duplication (see Quick Start) |
+| `environment` | `null` | Free-form label (`'development'`, `'staging'`) tagged on every doc and surfaced in `bb-check` |
+| `buildSha` | auto | Identifies the deploy. Auto-detected from `NEXT_PUBLIC_BUILD_SHA`, `VERCEL_GIT_COMMIT_SHA`, `NETLIFY_COMMIT_REF`, or `GITHUB_SHA`. Lets you tell stale errors from fresh ones |
+| `nodeEnv` | auto | Override for `process.env.NODE_ENV`. Auto-detected; rarely needed |
+| `tags` | `{}` | Arbitrary `Record<string,string>` tagged on every doc |
 
 Form values are never captured — only field names and validation status.
 

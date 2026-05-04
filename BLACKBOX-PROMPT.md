@@ -54,7 +54,8 @@ Check `package.json` for these scripts. If missing, add them:
   "bb:check": "bb-check",
   "bb:health": "bb-health",
   "bb:timeline": "bb-timeline",
-  "bb:clear": "bb-clear"
+  "bb:clear": "bb-clear",
+  "bb:ack": "bb-ack"
 }
 ```
 
@@ -69,20 +70,30 @@ This pulls persisted errors from Firestore grouped by fingerprint. Read the outp
 
 Useful flags:
 - `npm run bb:check -- --verbose` — full messages, paths, context
-- `npm run bb:check -- --id <fingerprint>` — deep dive into one error
+- `npm run bb:check -- --id <fingerprint>` — deep dive into one error (full stack, breadcrumbs, headers)
 - `npm run bb:check -- --new` — only errors since last check
+- `npm run bb:check -- --path=/admin/foo` — filter by path substring
+- `npm run bb:check -- --source=storage` — filter by source (`network`, `storage`, `firebase`, `console.error`, `resource_load`, etc.)
+- `npm run bb:check -- --since=1h` — last hour (also `30s`, `5m`, `2h`, `7d`)
+- `npm run bb:check -- --include-internal` — show framework-internal errors (react-dom warnings, Next chunks). Hidden by default
+
+The output also includes a `correlations` block. Pay attention to:
+- `same_path_session` — same page + same session, likely one flow
+- `multi_path` — same fingerprint on multiple routes
+- `url_host_cluster` — multiple fingerprints all hitting the same hostname (almost always ONE upstream root cause)
 
 If the user shares a diagnostic report JSON (from the panel's copy button), use that instead. The report contains deduplicated errors, a chronological breadcrumb trail, suspicious silences, and health data.
 
 ## Step 4: Fix errors
 
 When fixing errors found by BlackBox:
-- Errors with high `occurrences` are systemic — fix those first
+- Errors with high `occurrences` are systemic — fix those first. Also check `uniqueUserCount` to tell one-user bugs from everyone-bugs
 - Look at the FULL breadcrumb trail. The cause is usually 2-5 actions before the crash
-- Errors sharing the same page path + session are likely related (one root cause)
-- `resource_load` errors include `httpStatus` when available (404 = missing file, 0 = unreachable/CORS)
-- `console.error` errors from Firebase include `context.code` (e.g., `permission-denied`, `not-found`)
-- Errors with `lastSeenSessionId` different from current session may be stale
+- Errors sharing the same page path + session are likely related (one root cause). Look at the `correlations` block in the report for cross-error grouping
+- `resource_load` errors include `urlReachability`: `'ok'` (server returned 2xx — failure was image decode/CORS during render), `'http_error'` (server returned 4xx/5xx — see `httpStatus`), `'opaque_response'` (reachable but status couldn't be read client-side — check the Network tab for the real status), `'unreachable_origin'` (DNS / TLS / connection refused — hostname is dead). Probes also capture `responseHeaders` (cf-ray, content-type, etc.) and `responseBodyPreview` (first 200 bytes)
+- `console.error` errors from Firebase include `context.code` (e.g., `permission-denied`, `not-found`). If the error came through `bbOnSnapshot`/`bbFirestoreOp`/`bbWrapWrites`, it also has `queryPath`, `queryFilters`, or `documentPath`
+- Errors with `lastSeenSessionId` different from current session may be stale. Compare `metadata.buildSha` to current commit to confirm
+- Errors with `internal: true` had a stack of only framework frames — usually framework warnings, not app bugs. Ignore unless `--include-internal` shows they're spiking
 
 ## Step 5: After fixing, verify
 
@@ -94,7 +105,16 @@ If no new errors appear, the fix worked. Then clean up:
 ```bash
 npm run bb:clear -- --fingerprint <hash>   # clear specific fixed error
 npm run bb:clear                            # clear errors older than 1 day
+# (bb:check itself silently drops docs >7d at the start of each run)
 ```
+
+If an error is **expected** (e.g. waiting on the user to add a Cloudflare scope) and you want to suppress it from triage without deleting it:
+```bash
+npm run bb:ack <fingerprint> -- --comment "waiting on CF scope" --for 7d
+npm run bb:ack -- --list                       # show muted fingerprints
+npm run bb:ack <fingerprint> -- --clear        # remove the mute early
+```
+The mute auto-expires after the TTL.
 
 ## Step 6: Give feedback on BlackBox
 
@@ -114,18 +134,32 @@ Be specific — name the exact fields, endpoints, or error messages. Don't sugge
 
 What BlackBox captures:
 - JS errors (window.onerror), console.error, unhandled promise rejections
-- Network failures (4xx/5xx) with duration
-- Resource load failures (images/scripts/video) with HTTP status probe
-- Firebase/Firestore errors with error code and document path
+- Network failures (4xx/5xx) with duration, request/response body preview, and Cloudflare/nginx error-page detection
+- Resource load failures (images/scripts/video) with `urlReachability` classification, status probe, allowlisted response headers (cf-ray, content-type, content-length, x-amz-request-id, etc.), and a body preview
+- Storage failures (R2 / S3 / GCS) with `source: 'storage'` when fetched through `bbR2Fetch`
+- Firebase/Firestore errors with error code, document path, and (for queries via `bbOnSnapshot`/`bbFirestoreOp`) auto-extracted query path + filters
+- Silent Firestore write failures (when wrapped via `bbWrapWrites`) including permission-denied that was never `.catch`'d
 - React component crashes via error boundary
 - Breadcrumbs: clicks (with data-bb attributes), navigation, network, forms, custom logs
 - Suspicious silences: buttons clicked with no followup action
-- Slow requests (> 3s)
+- Slow requests (> 3s; first occurrence per URL is suppressed in dev to ignore Next cold compiles)
 
-Config options:
+Helpers (import from `@artiskon/blackbox`):
+- `bbWrapWrites({ addDoc, setDoc, updateDoc, deleteDoc })` — auto-track silent Firestore write rejections
+- `bbR2Fetch(url, init, { description, bucket, key })` — tag object-storage fetches as `source: 'storage'`
+- `bbOnSnapshot(query, onNext, onError, { description })` — Firestore listener with auto query-path extraction
+- `bbFirestoreOp(name, promise, { path, queryRef, queryDescription })` — wrap one-off Firestore ops
+- `bbTrackAuth(auth)` — Firebase Auth state-change breadcrumbs
+- `blackbox.setUser({ id, role })` — attribute errors to a user (drives `uniqueUserCount`)
+- `blackbox.setEnvironment(env)` / `blackbox.setTag(k, v)` — context tagging
+
+Config options (pass to `blackbox.init()`):
 - `errorExcludePatterns: ['fbcdn.net']` — suppress known errors by message substring
 - `consoleIgnorePatterns: [...]` — drop noisy console messages
 - `networkExcludePatterns: [...]` — skip URLs from network tracking
 - `sanitize: (breadcrumb) => breadcrumb` — redact breadcrumbs before storage
+- `buildSha` — deploy identifier (auto-detected from common host env vars; surfaces in `bb-check`)
+- `nodeEnv` — override for `process.env.NODE_ENV` (auto-detected; rarely needed)
+- `tags: { env: 'dev' }` — arbitrary metadata on every doc
 
-Panel: click the BB badge (bottom-right) or press Ctrl+Shift+B. Copy button in panel header produces a compact JSON diagnostic report.
+Panel: click the BB badge (bottom-right) or press Ctrl+Shift+B. Copy button in panel header produces a compact JSON diagnostic report. Internal errors are hidden by default with a toggle to reveal.

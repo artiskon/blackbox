@@ -16,6 +16,7 @@ Install and set up BlackBox error monitoring in this app. Follow these steps exa
    - In a useEffect, call: blackbox.init({ db, enabled: true })
    - The "enabled: true" flag is intentional — the app owner tests in production builds
    - If Firebase Auth exists, also import { bbTrackAuth } from '@artiskon/blackbox/firebase' and call bbTrackAuth(auth) after init
+   - Once auth resolves, call blackbox.setUser({ id: user.uid, role: user.role }) so uniqueUserCount tracks one-user vs everyone-bugs
 
 4. Create an error boundary wrapper:
    - Import { BlackBoxProvider } from '@artiskon/blackbox/components'
@@ -29,7 +30,8 @@ Install and set up BlackBox error monitoring in this app. Follow these steps exa
    "bb:check": "bb-check",
    "bb:health": "bb-health",
    "bb:timeline": "bb-timeline",
-   "bb:clear": "bb-clear"
+   "bb:clear": "bb-clear",
+   "bb:ack": "bb-ack"
 
 7. Create dev-logs/ directory and add "dev-logs/" to .gitignore
 
@@ -55,6 +57,20 @@ Install and set up BlackBox error monitoring in this app. Follow these steps exa
     - Trigger a test error to confirm it captures it
 
 Do NOT modify any BlackBox source files. Just install, wire up, and verify.
+
+## Recommended add-ons (after basic setup works)
+
+- **Wrap Firestore writes** so silent permission-denied becomes visible. Find every `import { addDoc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore'` and route through `bbWrapWrites` from '@artiskon/blackbox':
+  ```ts
+  import { addDoc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+  import { bbWrapWrites } from '@artiskon/blackbox';
+  const fs = bbWrapWrites({ addDoc, setDoc, updateDoc, deleteDoc });
+  // use fs.deleteDoc(...) etc. throughout the app
+  ```
+
+- **Wrap object-storage fetches** (Cloudflare R2 / S3 / GCS) with `bbR2Fetch` from '@artiskon/blackbox' so failures appear with `source: 'storage'` and bucket/key context, instead of generic network errors.
+
+- **Add `description` to `bbOnSnapshot` calls** so permission-denied errors carry a human-readable label of which query was rejected — auto-extracted query path + filters come along for free.
 
 ## Updating BlackBox
 
