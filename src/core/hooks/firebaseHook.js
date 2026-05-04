@@ -155,6 +155,14 @@ export async function bbTrackAuth(auth) {
  * errors verbatim — they never alter call shape, only observe.
  */
 export function bbWrapWrites(firestoreFns) {
+  // Server-side passthrough. The wrapper only emits BB breadcrumbs on the
+  // client (the singleton's hooks are never armed on the server), so on
+  // SSR the wrapped fns would be no-op-with-overhead. Returning the input
+  // object unchanged lets consumers call bbWrapWrites once at module top
+  // from a file imported by both client components and route handlers
+  // without needing a typeof window guard at the call site.
+  if (typeof window === 'undefined') return firestoreFns ?? {};
+
   const out = {};
   const writeOps = ['addDoc', 'setDoc', 'updateDoc', 'deleteDoc'];
   for (const op of writeOps) {

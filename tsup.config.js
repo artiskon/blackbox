@@ -13,7 +13,14 @@ export default defineConfig({
   outDir: 'dist',
   clean: true,
   external: ['react', 'react-dom', 'firebase', 'firebase/firestore', 'firebase/auth'],
-  banner: { js: "'use client';" },
+  // Per-entry 'use client' directives live in the source files that need them
+  // (src/components/*). A blanket banner over-applies the directive to
+  // server-safe entries (firebase.js, storage.js) and breaks Next.js App
+  // Router consumers that import bbWrapWrites / bbR2Fetch from shared
+  // services reachable by route handlers — Next then refuses the import
+  // with "Attempted to call X() from the server" even though the function
+  // itself is server-safe. Caught in v1.9.0 by an agent debugging
+  // /api/admin/clear-cache.
   esbuildOptions(options) {
     options.loader = { '.js': 'jsx' };
     options.jsx = 'automatic';

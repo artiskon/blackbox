@@ -144,14 +144,18 @@ What BlackBox captures:
 - Suspicious silences: buttons clicked with no followup action
 - Slow requests (> 3s; first occurrence per URL is suppressed in dev to ignore Next cold compiles)
 
-Helpers (import from `@artiskon/blackbox`):
-- `bbWrapWrites({ addDoc, setDoc, updateDoc, deleteDoc })` — auto-track silent Firestore write rejections
+Helpers (import from `@artiskon/blackbox`; all SSR-safe — root entry has no `'use client'` directive as of v1.9.1):
+- `bbWrapWrites({ addDoc, setDoc, updateDoc, deleteDoc })` — auto-track silent Firestore write rejections; returns passthrough on the server, real instrumentation on the client. Safe to call at module top in shared client/server services
 - `bbR2Fetch(url, init, { description, bucket, key })` — tag object-storage fetches as `source: 'storage'`
 - `bbOnSnapshot(query, onNext, onError, { description })` — Firestore listener with auto query-path extraction
 - `bbFirestoreOp(name, promise, { path, queryRef, queryDescription })` — wrap one-off Firestore ops
 - `bbTrackAuth(auth)` — Firebase Auth state-change breadcrumbs
 - `blackbox.setUser({ id, role })` — attribute errors to a user (drives `uniqueUserCount`)
 - `blackbox.setEnvironment(env)` / `blackbox.setTag(k, v)` — context tagging
+
+Components (import from `@artiskon/blackbox/components` — this subpath carries `'use client'`):
+- `BlackBoxPanel` — floating debug panel
+- `BlackBoxProvider` — error-boundary wrapper
 
 Config options (pass to `blackbox.init()`):
 - `errorExcludePatterns: ['fbcdn.net']` — suppress known errors by message substring

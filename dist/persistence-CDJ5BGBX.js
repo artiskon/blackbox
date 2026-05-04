@@ -1,4 +1,3 @@
-'use client';
 import {
   _resetPersistence,
   _setCollectionRef,
@@ -8,7 +7,7 @@ import {
   getPersistenceConfig,
   initPersistence,
   isCircuitOpen
-} from "./chunk-ZMTFW4GP.js";
+} from "./chunk-OYTJZ5FQ.js";
 export {
   _resetPersistence,
   _setCollectionRef,

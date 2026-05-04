@@ -1,9 +1,8 @@
-'use client';
 import {
   bbR2Fetch
-} from "./chunk-S6D5O7IK.js";
-import "./chunk-6IHTH4NU.js";
-import "./chunk-ZMTFW4GP.js";
+} from "./chunk-SB246WEV.js";
+import "./chunk-7C3ST46F.js";
+import "./chunk-OYTJZ5FQ.js";
 export {
   bbR2Fetch
 };

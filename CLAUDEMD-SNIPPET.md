@@ -1,4 +1,8 @@
-## BlackBox v1.9.0 — Dev-Time Error Monitoring
+## BlackBox v1.9.1 — Dev-Time Error Monitoring
+
+### What's new in v1.9.1:
+- **SSR fix:** `bbWrapWrites`, `bbR2Fetch`, and the Firebase helpers can now be imported and called from server-side code (Next.js App Router route handlers, server components, shared services). Two changes: (1) the blanket `'use client'` banner that tsup applied to every dist entry was removed — only the components subpath carries the directive now, where it belongs; (2) `bbWrapWrites` short-circuits to a passthrough on the server (`typeof window === 'undefined'` returns the input fns unchanged), so a single top-level call works for both client and server consumers without a `typeof window` guard at the call site. Caught in v1.9.0 by an agent debugging `/api/admin/clear-cache`.
+- **Breaking (effectively a fix):** `BlackBoxPanel` and `BlackBoxProvider` are no longer re-exported from the package root. Import them from `@artiskon/blackbox/components` (which carries `'use client'`). The README documented this pattern already; the root re-export was a footgun that would silently bundle client-only code server-side now that the root no longer carries the directive.
 
 ### What's new in v1.9.0:
 - **Critical fix:** `urlReachability: 'cors_blocked'` was misleading — it fired any time a `no-cors` HEAD succeeded, but a 404 served without CORS headers also matched that path. Renamed to `'opaque_response'` with hint `reachable_but_status_unknown_check_network_tab`. Burned ~20 minutes in two separate debug sessions before this fix.

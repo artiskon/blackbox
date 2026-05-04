@@ -1,7 +1,6 @@
-'use client';
 import {
   blackbox_default
-} from "./chunk-6IHTH4NU.js";
+} from "./chunk-7C3ST46F.js";
 
 // src/core/hooks/firebaseHook.js
 function describeQueryRef(queryRef) {
@@ -109,6 +108,7 @@ async function bbTrackAuth(auth) {
   }
 }
 function bbWrapWrites(firestoreFns) {
+  if (typeof window === "undefined") return firestoreFns != null ? firestoreFns : {};
   const out = {};
   const writeOps = ["addDoc", "setDoc", "updateDoc", "deleteDoc"];
   for (const op of writeOps) {

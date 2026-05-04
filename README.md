@@ -68,6 +68,8 @@ const fs = bbWrapWrites({ addDoc, setDoc, updateDoc, deleteDoc });
 // use fs.addDoc / fs.deleteDoc / etc. in your app code
 ```
 
+**Safe to call from shared client/server modules.** As of v1.9.1, `bbWrapWrites` short-circuits to a passthrough on the server (returns the input fns unchanged), so the call works at module top in any file imported by both client components and Next.js App Router route handlers — no `typeof window` guard needed at the call site.
+
 ## Object Storage Wrapper (Cloudflare R2 / S3 / GCS)
 
 Tag fetches against object storage so failures filter cleanly with `bb-check --source=storage` instead of getting lost in generic network noise:

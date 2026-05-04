@@ -194,5 +194,7 @@ export default blackbox;
 
 // ---- Re-exports ----
 
-export { bbFirestoreOp, bbTrackAuth, bbOnSnapshot } from './firebase.js';
+export { bbFirestoreOp, bbTrackAuth, bbOnSnapshot, bbWrapWrites } from './firebase.js';
 export { bbR2Fetch } from './storage.js';
+// BlackBoxPanel / BlackBoxProvider are NOT re-exported here. Import from
+// '@artiskon/blackbox/components' to get the proper 'use client' boundary.

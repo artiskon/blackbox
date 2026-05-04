@@ -67,6 +67,7 @@ Do NOT modify any BlackBox source files. Just install, wire up, and verify.
   const fs = bbWrapWrites({ addDoc, setDoc, updateDoc, deleteDoc });
   // use fs.deleteDoc(...) etc. throughout the app
   ```
+  Safe to call from a shared module imported by both client components AND server route handlers — `bbWrapWrites` is a server-side passthrough, no `typeof window` guard needed.
 
 - **Wrap object-storage fetches** (Cloudflare R2 / S3 / GCS) with `bbR2Fetch` from '@artiskon/blackbox' so failures appear with `source: 'storage'` and bucket/key context, instead of generic network errors.
 
