@@ -216,6 +216,13 @@ async function _doWrite(errorEntry) {
       errorEntry.stack
     );
 
+    // sessionTag is the runner-supplied correlation token. On the update
+    // path we set lastSeenSessionTag so a doc that fires during the runner's
+    // window — even if the doc was created in a previous (real-user)
+    // session — surfaces in the runner's `sessionTag == X AND lastSeen > t`
+    // query. The historical sessionTag on the doc itself is left alone.
+    const sessionTag = errorEntry.sessionTag || _config.sessionTag || null;
+
     // Deduplication: check local cache first (avoids Firestore eventual consistency race)
     const cachedRef = _fingerprintCache.get(fingerprint);
     if (cachedRef) {
@@ -226,6 +233,7 @@ async function _doWrite(errorEntry) {
           occurrences: (currentData?.occurrences || 1) + stormCount,
           lastSeen: fns.serverTimestamp(),
           lastSeenSessionId: errorEntry.sessionId,
+          ...(sessionTag ? { lastSeenSessionTag: sessionTag } : {}),
           breadcrumbs: errorEntry.breadcrumbs || []
         };
         const userKey = userKeyFor(errorEntry);
@@ -272,6 +280,7 @@ async function _doWrite(errorEntry) {
           occurrences: (currentData.occurrences || 1) + stormCount,
           lastSeen: fns.serverTimestamp(),
           lastSeenSessionId: errorEntry.sessionId,
+          ...(sessionTag ? { lastSeenSessionTag: sessionTag } : {}),
           breadcrumbs: errorEntry.breadcrumbs || []
         };
         const userKey = userKeyFor(errorEntry);
@@ -303,6 +312,7 @@ async function _doWrite(errorEntry) {
       groupingInputs,
       sessionId: errorEntry.sessionId,
       lastSeenSessionId: errorEntry.sessionId,
+      ...(sessionTag ? { sessionTag } : {}),
       type: 'error',
       message: errorEntry.message,
       stack: errorEntry.stack || '',

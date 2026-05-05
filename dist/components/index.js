@@ -1,11 +1,11 @@
 "use client";
 import {
   blackbox_default
-} from "../chunk-TC5I246H.js";
+} from "../chunk-WOIMV5D3.js";
 import {
   __spreadProps,
   __spreadValues
-} from "../chunk-ZNKUSKNI.js";
+} from "../chunk-W2CFSJ2O.js";
 
 // src/components/BlackBoxPanel.js
 import { useState, useEffect, useCallback } from "react";
@@ -248,20 +248,28 @@ function BlackBoxPanel() {
     function stripUncaught(m) {
       return (m || "").replace(/^Uncaught\s+\w+:\s*/, "");
     }
+    function tailMatch(a, b, n = 80) {
+      if (!a || !b) return false;
+      const ta = a.slice(-n);
+      const tb = b.slice(-n);
+      if (ta.length < 30 || tb.length < 30) return false;
+      return a.includes(tb) || b.includes(ta);
+    }
     const grouped = /* @__PURE__ */ new Map();
     for (const err of [...errors].reverse()) {
-      const msg = (err.message || "").slice(0, 80);
+      const msg = (err.message || "").slice(0, 200);
       const msgNorm = stripUncaught(msg);
       const ts = ((_c = err.metadata) == null ? void 0 : _c.timestamp) || "";
-      const key = `${err.source}:${msg}`;
+      const key = `${err.source}:${msg.slice(0, 80)}`;
       let merged = false;
       if (ts) {
         const tsMs = new Date(ts).getTime();
         for (const [, existing] of grouped) {
-          const existingNorm = stripUncaught((existing.message || "").slice(0, 80));
-          if (msgNorm === existingNorm || msgNorm.includes(existingNorm.slice(0, 40)) || existingNorm.includes(msgNorm.slice(0, 40))) {
+          const existingNorm = stripUncaught((existing.message || "").slice(0, 200));
+          const matched = msgNorm === existingNorm || msgNorm.includes(existingNorm.slice(0, 40)) || existingNorm.includes(msgNorm.slice(0, 40)) || tailMatch(msgNorm, existingNorm);
+          if (matched) {
             const existingTs = new Date(existing.timestamp || 0).getTime();
-            if (Math.abs(tsMs - existingTs) < 50) {
+            if (Math.abs(tsMs - existingTs) < 250) {
               existing.count++;
               existing.sources = existing.sources || [existing.source];
               if (!existing.sources.includes(err.source)) existing.sources.push(err.source);
@@ -279,6 +287,9 @@ function BlackBoxPanel() {
       const entry = stripNulls(__spreadValues({
         message: err.message,
         source: err.source,
+        // Surface the in-memory fingerprint so consumers can `bb-ack <fp>`
+        // straight from the exported report without re-running bb-check.
+        fingerprint: err._fingerprint || void 0,
         stack: cleanStack(err.stack),
         path: err.path || err.url,
         timestamp: (_d = err.metadata) == null ? void 0 : _d.timestamp,
@@ -318,12 +329,18 @@ function BlackBoxPanel() {
     });
     const report = stripNulls({
       _type: "BlackBox Diagnostic Report",
-      _version: "1.9.3",
+      _version: "1.9.4",
       _generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      _instructions: "Errors are deduplicated (count = occurrences). Breadcrumbs are the single chronological trail of user actions for the session. Silences are buttons clicked with no followup (possible broken UI). History contains persisted errors from Firestore (grouped by fingerprint). Health is a 24h summary. Errors with internal:true had a stack of only framework frames \u2014 they are usually framework warnings, not app bugs. urlReachability on resource_load tells you DNS vs CORS vs HTTP failure at a glance.",
+      _instructions: "Errors are deduplicated (count = occurrences). Cross-channel cascade dedup merges firebase-wrapper + console.error rethrows of the same incident \u2014 sources[] lists the channels it fired on. session.uniqueIncidents is the post-dedup distinct-incident count; session.errorCount is the raw record count. Each error carries fingerprint for direct `bb-ack <fp>`. For source:firebase invalid-argument errors, context.firstUndefinedPath gives the dotted/indexed path within the document (e.g. sections[5].subtitle); context.payloadShape sketches the top 2 levels; context.callerFrame is the app frame that called the wrapped write. Breadcrumbs are the single chronological trail. Silences are buttons clicked with no followup. History is persisted errors grouped by fingerprint. Health is a 24h summary. Errors with internal:true had a stack of only framework frames. urlReachability on resource_load tells you DNS vs CORS vs HTTP failure. session.buildSha identifies the build that produced this report.",
       session: stripNulls({
         id: blackbox_default.getSessionId(),
         errorCount,
+        // Post-cascade-dedup count of distinct incidents. `errorCount` is
+        // the raw record count (3 try/catch layers wrapping one throw = 3);
+        // `uniqueIncidents` collapses cascades to the actual user-visible
+        // bug count. At a glance the session header now answers "how many
+        // problems happened" instead of "how many records did we write".
+        uniqueIncidents: grouped.size,
         environment: config.environment,
         nodeEnv: config.nodeEnv,
         buildSha: config.buildSha,

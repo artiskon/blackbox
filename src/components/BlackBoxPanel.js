@@ -235,27 +235,51 @@ function BlackBoxPanel() {
     }
 
     // -- Deduplicate errors --
-    // Group by source+message, but also merge cross-source duplicates
-    // when message and timestamp match (e.g., React re-throws JS errors as console.error)
-    // Strip "Uncaught ErrorType: " prefix for comparison
+    // Group by source+message, but also merge cross-source duplicates when
+    // they're plausibly the same incident wrapped at multiple try/catch
+    // layers. Three matching strategies, weakest to strongest:
+    //   1. Exact-equality after stripping "Uncaught ErrorType:" prefix
+    //   2. Prefix containment (one's first 40 chars inside the other)
+    //   3. Tail containment (one's last 80 chars inside the other) — catches
+    //      cascades where each layer prepends its own prefix:
+    //         "Save failed: Function updateDoc() called with invalid data..."
+    //         "Error updating proposal: Function updateDoc() called with invalid data..."
+    //         "Firestore updateDoc failed: Function updateDoc() called with invalid data..."
+    //      Prefix matching can't link these; the shared suffix can.
+    // Time window widened from 50ms → 250ms because rethrows that bubble
+    // through 2-3 service-layer try/catches can take 100ms+ on a slow render
+    // tick before reaching the bottom-most console.error.
     function stripUncaught(m) {
       return (m || '').replace(/^Uncaught\s+\w+:\s*/, '');
     }
+    function tailMatch(a, b, n = 80) {
+      if (!a || !b) return false;
+      const ta = a.slice(-n);
+      const tb = b.slice(-n);
+      if (ta.length < 30 || tb.length < 30) return false;
+      return a.includes(tb) || b.includes(ta);
+    }
     const grouped = new Map();
     for (const err of [...errors].reverse()) {
-      const msg = (err.message || '').slice(0, 80);
+      const msg = (err.message || '').slice(0, 200);
       const msgNorm = stripUncaught(msg);
       const ts = err.metadata?.timestamp || '';
-      const key = `${err.source}:${msg}`;
-      // Check for cross-source duplicate: same message + same timestamp (within 50ms)
+      const key = `${err.source}:${msg.slice(0, 80)}`;
+      // Cross-source dedup: same incident wrapped in different layers.
       let merged = false;
       if (ts) {
         const tsMs = new Date(ts).getTime();
         for (const [, existing] of grouped) {
-          const existingNorm = stripUncaught((existing.message || '').slice(0, 80));
-          if (msgNorm === existingNorm || msgNorm.includes(existingNorm.slice(0, 40)) || existingNorm.includes(msgNorm.slice(0, 40))) {
+          const existingNorm = stripUncaught((existing.message || '').slice(0, 200));
+          const matched = (
+            msgNorm === existingNorm ||
+            msgNorm.includes(existingNorm.slice(0, 40)) ||
+            existingNorm.includes(msgNorm.slice(0, 40)) ||
+            tailMatch(msgNorm, existingNorm)
+          );
+          if (matched) {
             const existingTs = new Date(existing.timestamp || 0).getTime();
-            if (Math.abs(tsMs - existingTs) < 50) {
+            if (Math.abs(tsMs - existingTs) < 250) {
               existing.count++;
               existing.sources = existing.sources || [existing.source];
               if (!existing.sources.includes(err.source)) existing.sources.push(err.source);
@@ -273,6 +297,9 @@ function BlackBoxPanel() {
       const entry = stripNulls({
         message: err.message,
         source: err.source,
+        // Surface the in-memory fingerprint so consumers can `bb-ack <fp>`
+        // straight from the exported report without re-running bb-check.
+        fingerprint: err._fingerprint || undefined,
         stack: cleanStack(err.stack),
         path: err.path || err.url,
         timestamp: err.metadata?.timestamp,
@@ -324,12 +351,18 @@ function BlackBoxPanel() {
     // -- Build report --
     const report = stripNulls({
       _type: 'BlackBox Diagnostic Report',
-      _version: '1.9.3',
+      _version: '1.9.4',
       _generatedAt: new Date().toISOString(),
-      _instructions: 'Errors are deduplicated (count = occurrences). Breadcrumbs are the single chronological trail of user actions for the session. Silences are buttons clicked with no followup (possible broken UI). History contains persisted errors from Firestore (grouped by fingerprint). Health is a 24h summary. Errors with internal:true had a stack of only framework frames — they are usually framework warnings, not app bugs. urlReachability on resource_load tells you DNS vs CORS vs HTTP failure at a glance.',
+      _instructions: 'Errors are deduplicated (count = occurrences). Cross-channel cascade dedup merges firebase-wrapper + console.error rethrows of the same incident — sources[] lists the channels it fired on. session.uniqueIncidents is the post-dedup distinct-incident count; session.errorCount is the raw record count. Each error carries fingerprint for direct `bb-ack <fp>`. For source:firebase invalid-argument errors, context.firstUndefinedPath gives the dotted/indexed path within the document (e.g. sections[5].subtitle); context.payloadShape sketches the top 2 levels; context.callerFrame is the app frame that called the wrapped write. Breadcrumbs are the single chronological trail. Silences are buttons clicked with no followup. History is persisted errors grouped by fingerprint. Health is a 24h summary. Errors with internal:true had a stack of only framework frames. urlReachability on resource_load tells you DNS vs CORS vs HTTP failure. session.buildSha identifies the build that produced this report.',
       session: stripNulls({
         id: blackbox.getSessionId(),
         errorCount,
+        // Post-cascade-dedup count of distinct incidents. `errorCount` is
+        // the raw record count (3 try/catch layers wrapping one throw = 3);
+        // `uniqueIncidents` collapses cascades to the actual user-visible
+        // bug count. At a glance the session header now answers "how many
+        // problems happened" instead of "how many records did we write".
+        uniqueIncidents: grouped.size,
         environment: config.environment,
         nodeEnv: config.nodeEnv,
         buildSha: config.buildSha,

@@ -1,8 +1,75 @@
 import {
   blackbox_default
-} from "./chunk-TC5I246H.js";
+} from "./chunk-WOIMV5D3.js";
+import {
+  extractTopAppFrame
+} from "./chunk-W2CFSJ2O.js";
 
 // src/core/hooks/firebaseHook.js
+function summarizePayload(data, maxDepth = 4, maxKeys = 200) {
+  const out = { firstUndefinedPath: null, payloadShape: null };
+  if (!data || typeof data !== "object") return out;
+  let visited = 0;
+  const seen = /* @__PURE__ */ new WeakSet();
+  const shape = {};
+  function walk(value, path, depth, shapeNode) {
+    if (visited >= maxKeys) return;
+    if (value === void 0) {
+      if (!out.firstUndefinedPath) out.firstUndefinedPath = path || "<root>";
+      return;
+    }
+    if (value === null) return;
+    if (typeof value !== "object") return;
+    if (seen.has(value)) return;
+    seen.add(value);
+    if (depth >= maxDepth) return;
+    if (Array.isArray(value)) {
+      for (let i = 0; i < value.length; i++) {
+        if (visited >= maxKeys) return;
+        visited++;
+        const child = value[i];
+        const childPath = `${path}[${i}]`;
+        if (child === void 0) {
+          if (!out.firstUndefinedPath) out.firstUndefinedPath = childPath;
+        } else if (child && typeof child === "object" && depth < maxDepth - 1) {
+          walk(child, childPath, depth + 1, null);
+        }
+      }
+      return;
+    }
+    for (const k of Object.keys(value)) {
+      if (visited >= maxKeys) return;
+      visited++;
+      const child = value[k];
+      const childPath = path ? `${path}.${k}` : k;
+      if (depth === 0 && shapeNode) {
+        if (child === void 0) shapeNode[k] = "undefined";
+        else if (child === null) shapeNode[k] = "null";
+        else if (Array.isArray(child)) shapeNode[k] = `array[${child.length}]`;
+        else if (typeof child === "object") {
+          shapeNode[k] = {};
+          for (const k2 of Object.keys(child).slice(0, 12)) {
+            const v2 = child[k2];
+            if (v2 === void 0) shapeNode[k][k2] = "undefined";
+            else if (v2 === null) shapeNode[k][k2] = "null";
+            else if (Array.isArray(v2)) shapeNode[k][k2] = `array[${v2.length}]`;
+            else shapeNode[k][k2] = typeof v2;
+          }
+        } else {
+          shapeNode[k] = typeof child;
+        }
+      }
+      if (child === void 0) {
+        if (!out.firstUndefinedPath) out.firstUndefinedPath = childPath;
+      } else if (child && typeof child === "object") {
+        walk(child, childPath, depth + 1, null);
+      }
+    }
+  }
+  walk(data, "", 0, shape);
+  if (Object.keys(shape).length > 0) out.payloadShape = shape;
+  return out;
+}
 function permissionDeniedActionHint(documentPath, queryPath, queryDescription) {
   const target = documentPath || queryPath || "the rejected path";
   const desc = queryDescription ? ` (${queryDescription})` : "";
@@ -43,6 +110,13 @@ function describeQueryRef(queryRef) {
   return Object.keys(out).length > 0 ? out : null;
 }
 async function bbFirestoreOp(operationName, promise, details = {}) {
+  const callerStack = (() => {
+    try {
+      return new Error().stack || "";
+    } catch (e) {
+      return "";
+    }
+  })();
   try {
     const result = await promise;
     try {
@@ -72,11 +146,19 @@ async function bbFirestoreOp(operationName, promise, details = {}) {
           const undefinedKeys = keys.filter((k) => details.data[k] === void 0);
           ctx.writeFields = keys.slice(0, 20);
           if (undefinedKeys.length > 0) ctx.undefinedFields = undefinedKeys;
+          const summary = summarizePayload(details.data);
+          if (summary.firstUndefinedPath) ctx.firstUndefinedPath = summary.firstUndefinedPath;
+          if (summary.payloadShape) ctx.payloadShape = summary.payloadShape;
         } catch (e) {
         }
       }
       if (error.code === "permission-denied") {
         ctx.action_hint = permissionDeniedActionHint(ctx.documentPath, ctx.queryPath, ctx.queryDescription);
+      }
+      try {
+        const frame = extractTopAppFrame(callerStack);
+        if (frame) ctx.callerFrame = frame.slice(0, 200);
+      } catch (e) {
       }
       blackbox_default._recordError({
         message: `Firestore ${operationName} failed: ${error.message || error.code}`,
@@ -125,6 +207,21 @@ function bbWrapWrites(firestoreFns) {
     out[op] = function(refOrQuery, ...args) {
       var _a, _b, _c;
       const path = (refOrQuery == null ? void 0 : refOrQuery.path) || ((_c = (_b = (_a = refOrQuery == null ? void 0 : refOrQuery._key) == null ? void 0 : _a.path) == null ? void 0 : _b.canonicalString) == null ? void 0 : _c.call(_b)) || null;
+      const callerStack = (() => {
+        try {
+          return new Error().stack || "";
+        } catch (e) {
+          return "";
+        }
+      })();
+      const callerFrame = (() => {
+        try {
+          return extractTopAppFrame(callerStack).slice(0, 200) || null;
+        } catch (e) {
+          return null;
+        }
+      })();
+      const writeData = op === "addDoc" || op === "setDoc" || op === "updateDoc" ? args[0] : null;
       let result;
       try {
         result = original(refOrQuery, ...args);
@@ -136,11 +233,25 @@ function bbWrapWrites(firestoreFns) {
             path,
             code: (syncErr == null ? void 0 : syncErr.code) || null
           });
+          const syncCtx = { code: syncErr == null ? void 0 : syncErr.code, operation: op, documentPath: path };
+          if (callerFrame) syncCtx.callerFrame = callerFrame;
+          if ((syncErr == null ? void 0 : syncErr.code) === "invalid-argument" && writeData && typeof writeData === "object") {
+            try {
+              const keys = Object.keys(writeData);
+              syncCtx.writeFields = keys.slice(0, 20);
+              const undefinedKeys = keys.filter((k) => writeData[k] === void 0);
+              if (undefinedKeys.length > 0) syncCtx.undefinedFields = undefinedKeys;
+              const summary = summarizePayload(writeData);
+              if (summary.firstUndefinedPath) syncCtx.firstUndefinedPath = summary.firstUndefinedPath;
+              if (summary.payloadShape) syncCtx.payloadShape = summary.payloadShape;
+            } catch (e) {
+            }
+          }
           blackbox_default._recordError({
             message: `Firestore ${op} failed (sync): ${(syncErr == null ? void 0 : syncErr.message) || (syncErr == null ? void 0 : syncErr.code) || syncErr}`,
             stack: (syncErr == null ? void 0 : syncErr.stack) || "",
             source: "firebase",
-            context: { code: syncErr == null ? void 0 : syncErr.code, operation: op, documentPath: path }
+            context: syncCtx
           });
         } catch (e) {
         }
@@ -167,21 +278,22 @@ function bbWrapWrites(firestoreFns) {
                 operation: op,
                 documentPath: path
               };
-              if ((err == null ? void 0 : err.code) === "invalid-argument" && (op === "setDoc" || op === "updateDoc" || op === "addDoc")) {
+              if ((err == null ? void 0 : err.code) === "invalid-argument" && writeData && typeof writeData === "object") {
                 try {
-                  const data = op === "addDoc" ? args[0] : args[0];
-                  if (data && typeof data === "object") {
-                    const keys = Object.keys(data);
-                    ctx.writeFields = keys.slice(0, 20);
-                    const undefinedKeys = keys.filter((k) => data[k] === void 0);
-                    if (undefinedKeys.length > 0) ctx.undefinedFields = undefinedKeys;
-                  }
+                  const keys = Object.keys(writeData);
+                  ctx.writeFields = keys.slice(0, 20);
+                  const undefinedKeys = keys.filter((k) => writeData[k] === void 0);
+                  if (undefinedKeys.length > 0) ctx.undefinedFields = undefinedKeys;
+                  const summary = summarizePayload(writeData);
+                  if (summary.firstUndefinedPath) ctx.firstUndefinedPath = summary.firstUndefinedPath;
+                  if (summary.payloadShape) ctx.payloadShape = summary.payloadShape;
                 } catch (e) {
                 }
               }
               if ((err == null ? void 0 : err.code) === "permission-denied") {
                 ctx.action_hint = permissionDeniedActionHint(path, null, null);
               }
+              if (callerFrame) ctx.callerFrame = callerFrame;
               blackbox_default._recordError({
                 message: `Firestore ${op} failed: ${(err == null ? void 0 : err.message) || (err == null ? void 0 : err.code) || err}`,
                 stack: (err == null ? void 0 : err.stack) || "",

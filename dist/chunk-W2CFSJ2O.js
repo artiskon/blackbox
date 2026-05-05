@@ -336,17 +336,19 @@ async function _doWrite(errorEntry) {
       errorEntry.path,
       errorEntry.stack
     );
+    const sessionTag = errorEntry.sessionTag || _config.sessionTag || null;
     const cachedRef = _fingerprintCache.get(fingerprint);
     if (cachedRef) {
       try {
         const currentData = (_a = (await fns.getDocs(fns.query(_collectionRef, fns.where("fingerprint", "==", fingerprint), fns.limit(1)))).docs[0]) == null ? void 0 : _a.data();
         const stormCount = errorEntry._storm ? errorEntry._storm.count : 1;
-        const updateData = {
+        const updateData = __spreadProps(__spreadValues({
           occurrences: ((currentData == null ? void 0 : currentData.occurrences) || 1) + stormCount,
           lastSeen: fns.serverTimestamp(),
-          lastSeenSessionId: errorEntry.sessionId,
+          lastSeenSessionId: errorEntry.sessionId
+        }, sessionTag ? { lastSeenSessionTag: sessionTag } : {}), {
           breadcrumbs: errorEntry.breadcrumbs || []
-        };
+        });
         const userKey2 = userKeyFor(errorEntry);
         if (userKey2) {
           const tracked = Array.isArray(currentData == null ? void 0 : currentData.uniqueUsers) ? currentData.uniqueUsers : [];
@@ -383,12 +385,13 @@ async function _doWrite(errorEntry) {
       try {
         const currentData = existingDoc.data();
         const stormCount = errorEntry._storm ? errorEntry._storm.count : 1;
-        const updateData = {
+        const updateData = __spreadProps(__spreadValues({
           occurrences: (currentData.occurrences || 1) + stormCount,
           lastSeen: fns.serverTimestamp(),
-          lastSeenSessionId: errorEntry.sessionId,
+          lastSeenSessionId: errorEntry.sessionId
+        }, sessionTag ? { lastSeenSessionTag: sessionTag } : {}), {
           breadcrumbs: errorEntry.breadcrumbs || []
-        };
+        });
         const userKey2 = userKeyFor(errorEntry);
         if (userKey2) {
           const tracked = Array.isArray(currentData.uniqueUsers) ? currentData.uniqueUsers : [];
@@ -410,17 +413,18 @@ async function _doWrite(errorEntry) {
       }
     }
     const userKey = userKeyFor(errorEntry);
-    let doc = __spreadValues(__spreadProps(__spreadValues(__spreadValues(__spreadProps(__spreadValues({
+    let doc = __spreadValues(__spreadProps(__spreadValues(__spreadValues(__spreadProps(__spreadValues(__spreadProps(__spreadValues({
       schemaVersion: _config.schemaVersion,
       fingerprint,
       groupingInputs,
       sessionId: errorEntry.sessionId,
-      lastSeenSessionId: errorEntry.sessionId,
+      lastSeenSessionId: errorEntry.sessionId
+    }, sessionTag ? { sessionTag } : {}), {
       type: "error",
       message: errorEntry.message,
       stack: errorEntry.stack || "",
       source: errorEntry.source
-    }, errorEntry.firedAs && errorEntry.firedAs.length > 1 ? { firedAs: errorEntry.firedAs } : {}), {
+    }), errorEntry.firedAs && errorEntry.firedAs.length > 1 ? { firedAs: errorEntry.firedAs } : {}), {
       url: errorEntry.url,
       path: errorEntry.path,
       breadcrumbs: errorEntry.breadcrumbs || [],

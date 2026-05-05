@@ -27,6 +27,21 @@ export interface BlackBoxConfig {
   tags?: Record<string, string>;
   /** User context for error attribution */
   user?: { id?: string; role?: string; [key: string]: any } | null;
+  /** Correlation token persisted as top-level `sessionTag` on each error doc
+   *  (and `lastSeenSessionTag` on update). Auto-read from
+   *  `window.__BB_SESSION_TAG__` if set before init. Trimmed to 64 chars.
+   *  Used by audit runners (e.g. DigitalDen ui-check Playwright runner) to
+   *  filter `__blackbox` by their own session and ignore concurrent
+   *  real-user activity. */
+  sessionTag?: string;
+  /** When true, BlackBox sets `window.__BB_FAIL_FAST_TRIPPED__` and
+   *  dispatches a `blackbox:fail-fast` CustomEvent on the first non-internal
+   *  error captured, so an audit runner can halt immediately. BlackBox
+   *  does not throw — that would re-enter the capture path. Auto-on when
+   *  `window.__BB_FAIL_FAST__` is truthy at init. Internal-frame-only
+   *  errors (framework warnings) never trip. Never enable in real-user
+   *  sessions. */
+  failFast?: boolean;
 }
 
 // ---- Breadcrumbs & Errors ----

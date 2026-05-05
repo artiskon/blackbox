@@ -43,3 +43,4 @@ New helper `bbWrapWrites(firestoreFns)` exported from `@artiskon/blackbox`. Retu
 - v1.9.1 SSR fix was driven by the agent who hit the server-import error post-1.9.0 — same general feature, real follow-on bug.
 - BB-1.8 agent (acted on in v1.9.2 batch) re-cited "silent permission-denied". That report predated this decision. Confirms shipped fix.
 - **If a future agent asks to "auto-instrument writes globally":** see "We did NOT auto-instrument" trade-off above. Premise hasn't changed.
+- **v1.9.4 (additive):** invalid-argument errors now carry `firstUndefinedPath` + `payloadShape` (deep payload introspection — ADR-0022) and `callerFrame` (the app frame that called the wrapped write — see ADR-0016 v1.9.4 section). Same `bbWrapWrites` API; richer context on the recorded error. Driven by a v1.9.3 dogfood session where Firestore's own error gave the document ID but not the field path within it.

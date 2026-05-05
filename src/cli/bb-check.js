@@ -347,6 +347,59 @@ async function main() {
       }
     }
 
+    // Same-shape Firestore-write clusters across DIFFERENT collections.
+    // When 2+ fingerprints all surface "Unsupported field value: undefined"
+    // (or similar invalid-argument boilerplate) but on different document
+    // paths (`proposals/...` vs `savedSections/...` vs `users/...`), they
+    // share an underlying app pattern: passing optional fields through
+    // without coercing undefined → null/''. Surfacing the cluster on the
+    // FIRST occurrence lets the dev fix at the service layer instead of
+    // shipping point fixes per-collection. Same shape as url_host_cluster.
+    {
+      const INVALID_ARG_RE = /Unsupported field value: undefined|invalid-argument/i;
+      const byShape = new Map();
+      for (let i = 0; i < grouped.length; i++) {
+        const g = grouped[i];
+        if (g.source !== 'firebase') continue;
+        if (!INVALID_ARG_RE.test(g.message || '')) continue;
+        // Bucket by the leading collection segment of documentPath.
+        const collections = new Set();
+        for (const e of g.errors) {
+          const p = e.context?.documentPath || e.path || '';
+          const seg = String(p).split('/')[0];
+          if (seg) collections.add(seg);
+        }
+        for (const col of collections) {
+          if (!byShape.has(col)) byShape.set(col, []);
+          byShape.get(col).push({ index: i + 1, fingerprint: g.fingerprint, occurrences: g.totalOccurrences });
+        }
+      }
+      // Cluster condition: 2+ fingerprints across 2+ DIFFERENT collections.
+      // (Same-collection invalid-argument clusters are usually one bug;
+      // already merged by fingerprint upstream.)
+      const allEntries = [];
+      const seenIdx = new Set();
+      for (const [col, entries] of byShape) {
+        for (const e of entries) {
+          const k = `${e.index}:${col}`;
+          if (seenIdx.has(k)) continue;
+          seenIdx.add(k);
+          allEntries.push({ ...e, collection: col });
+        }
+      }
+      const distinctCols = new Set(allEntries.map(e => e.collection));
+      if (allEntries.length >= 2 && distinctCols.size >= 2) {
+        const totalOcc = allEntries.reduce((a, e) => a + e.occurrences, 0);
+        correlations.push({
+          kind: 'invalid_argument_cluster',
+          collections: [...distinctCols],
+          indices: allEntries.map(e => e.index),
+          fingerprints: allEntries.map(e => e.fingerprint),
+          totalOccurrences: totalOcc,
+        });
+      }
+    }
+
     // Pull the most recent error's environment/buildSha into sessionInfo so
     // the report header tells you "dev / commit abc1234" without grepping.
     const recent = errors[0];
@@ -419,6 +472,8 @@ async function main() {
           console.log(`    #${c.index} — same fingerprint on ${c.paths.length} pages: ${c.paths.slice(0, 3).join(', ')}`);
         } else if (c.kind === 'url_host_cluster') {
           console.log(`    #${c.indices.join(' + #')} — ${c.indices.length} fingerprints against ${c.host} (${c.totalOccurrences} occ total) — likely ONE root cause`);
+        } else if (c.kind === 'invalid_argument_cluster') {
+          console.log(`    #${c.indices.join(' + #')} — invalid-argument across ${c.collections.length} collections (${c.collections.slice(0, 4).join(', ')}${c.collections.length > 4 ? ' …' : ''}) — fix at the write/service layer, not per collection`);
         }
       }
       console.log('');

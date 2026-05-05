@@ -1,4 +1,20 @@
-## BlackBox v1.9.3 — Dev-Time Error Monitoring
+## BlackBox v1.9.4 — Dev-Time Error Monitoring
+
+### What's new in v1.9.4
+
+Two themes in this release: Firestore-write debugging wins from a v1.9.3 dogfood session, and runner-integration plumbing for the DigitalDen ui-check Playwright runner.
+
+**Runner integration (DigitalDen):**
+- **`window.__BB_SESSION_TAG__` → top-level `sessionTag` on each error doc.** Read once at `init()` (trimmed to 64 chars). The DigitalDen runner sets it via Playwright's `addInitScript` before the page boots; once persisted, the runner can filter `__blackbox` by `sessionTag == <current>` and ignore concurrent activity from real users on the dev VPS, manual operator clicks, or other audit sessions. Update path also writes `lastSeenSessionTag` so a re-fire of a pre-existing fingerprint during the runner's window still surfaces in its query.
+- **`failFast` mode.** Opt in via `init({ failFast: true })` or `window.__BB_FAIL_FAST__` (set via the same `addInitScript` pattern). On the first non-internal error captured, BB sets `window.__BB_FAIL_FAST_TRIPPED__ = { fingerprint, message, source, recordedAt, sessionTag }` and dispatches a `CustomEvent('blackbox:fail-fast', { detail })` on `window`. The runner watches either signal and halts the route capture early. BB does NOT throw — that would re-enter the capture path via `window.onerror` / `unhandledrejection`. Internal-frame-only errors (framework warnings) never trip; real-user sessions should never enable this.
+
+**Firestore-write debugging:**
+- **`context.firstUndefinedPath` on Firestore `invalid-argument` errors** — for `bbWrapWrites` and `bbFirestoreOp`, BB now walks the write payload (depth 4, max 200 keys, cycle-safe) and surfaces the exact dotted/indexed path of the first `undefined` value (e.g. `sections[5].subtitle`). Firestore's own error tells you the document ID but not the field within; this closes that gap. `context.payloadShape` sketches the top 2 levels for additional triage. The previous top-level `writeFields` / `undefinedFields` fields still ship.
+- **`context.callerFrame` on `bbWrapWrites` + `bbFirestoreOp` errors** — extracted from a stack snapshot taken BEFORE the SDK call, so the app frame survives the await/microtask boundary. Same `extractTopAppFrame` helper as ADR-0016. No more grep to find which file called the wrapped write.
+- **Cascade dedup strengthened** — when a single throw cascades through multiple try/catch layers (firebase wrapper + service-layer console.error + UI-layer console.error), the panel report now collapses them via tail-substring matching (last 80 chars) within a 250 ms window. Previously the prefix-only matcher missed cascades like `"Firestore updateDoc failed: Function updateDoc()..."` vs `"Save failed: Function updateDoc()..."`. Sources merge into `firedAs[]`.
+- **`session.uniqueIncidents`** — post-cascade-dedup distinct-incident count alongside the raw `errorCount`. A session that records 3 wrappings of one throw now reads `errorCount: 3, uniqueIncidents: 1` instead of looking like 3 problems.
+- **`fingerprint` on every exported error** — the panel report's `errors[]` entries now carry the in-memory fingerprint, so `bb-ack <fp>` works from the export without re-running `bb-check`.
+- **`bb-check` invalid-argument cluster correlator** — when 2+ Firestore-write fingerprints surface `Unsupported field value: undefined` across distinct collections (e.g. `proposals/*` and `savedSections/*`), they cluster as one row with hint "fix at the write/service layer, not per collection". Same shape as `url_host_cluster` (ADR-0010). Fixes the "I shipped a wholesale `stripUndefinedDeep` on the second occurrence; should have done it on the first" pattern.
 
 ### What's new in v1.9.3 (three bug fixes from a v1.9.2 dogfood session):
 - **Caller frame on `console.error` now actually populates** in Next.js dev mode. The `extractTopAppFrame` regex was matching a bare `webpack` token, which catches *every* frame in dev (because Next prefixes them all with `webpack-internal:///`). App code was being skipped along with framework code. Removed the bare token; `node_modules` and `__webpack` keep catching the actual framework frames.
@@ -81,6 +97,8 @@
 - `buildSha` — string, identifies the deploy. Auto-detected from `NEXT_PUBLIC_BUILD_SHA` / `VERCEL_GIT_COMMIT_SHA` / `NETLIFY_COMMIT_REF` / `GITHUB_SHA` if not set
 - `nodeEnv` — string, override for `process.env.NODE_ENV`
 - `tags` — Record<string, string>, arbitrary metadata on every document
+- `sessionTag` — string, runner-supplied correlation token persisted as a top-level field on each error doc. Auto-picked-up from `window.__BB_SESSION_TAG__` if not passed explicitly. Trimmed to 64 chars
+- `failFast` — boolean (default false). When true, BB sets `window.__BB_FAIL_FAST_TRIPPED__` and dispatches a `blackbox:fail-fast` CustomEvent on the first non-internal error. Auto-enabled when `window.__BB_FAIL_FAST__` is truthy at init. Intended for unattended audit runners; do NOT enable in real-user sessions
 - `networkExcludePatterns` — string[], URL patterns to skip in network breadcrumbs (defaults: Firestore, Auth, HMR, Next.js internals)
 - `maxBreadcrumbs` — number (default: 80)
 - `stripQueryParams` — boolean (default: true)

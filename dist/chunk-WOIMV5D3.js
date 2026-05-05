@@ -11,7 +11,7 @@ import {
   initPersistence,
   isCircuitOpen,
   isStackEntirelyInternal
-} from "./chunk-ZNKUSKNI.js";
+} from "./chunk-W2CFSJ2O.js";
 
 // src/core/constants.js
 var DEFAULTS = {
@@ -1001,6 +1001,17 @@ var blackbox = {
       }
     } catch (e) {
     }
+    try {
+      if (typeof window !== "undefined") {
+        if (!_config.sessionTag && typeof window.__BB_SESSION_TAG__ === "string") {
+          _config.sessionTag = window.__BB_SESSION_TAG__.trim().slice(0, 64) || null;
+        }
+        if (_config.failFast === void 0 && window.__BB_FAIL_FAST__) {
+          _config.failFast = true;
+        }
+      }
+    } catch (e) {
+    }
     _sessionId = generateSessionId();
     let _pendingRecovery = null;
     try {
@@ -1189,7 +1200,7 @@ var blackbox = {
   // --- Firestore query methods for the UI panel ---
   async queryPersistedErrors(limit = 50) {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-MZWEDNL3.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-5RZAKLKT.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { errors: [], connected: false };
@@ -1228,7 +1239,7 @@ var blackbox = {
   },
   async queryHealth() {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-MZWEDNL3.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-5RZAKLKT.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { connected: false };
@@ -1266,7 +1277,7 @@ var blackbox = {
   },
   async queryTimeline(minutes = 5) {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-MZWEDNL3.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-5RZAKLKT.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { events: [], connected: false };
@@ -1295,7 +1306,7 @@ var blackbox = {
   },
   async clearPersistedErrors() {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-MZWEDNL3.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-5RZAKLKT.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref || !fns.deleteDoc) return { success: false, error: "Not connected to Firestore" };
@@ -1388,7 +1399,7 @@ var blackbox = {
       const truncatedMessage = message ? message.slice(0, _config.maxMessageLength) : "";
       const { fingerprint: _fp } = generateFingerprint(truncatedMessage, source, _getCurrentPath(), stack);
       const _internal = isStackEntirelyInternal(stack);
-      const entry = {
+      const entry = __spreadProps(__spreadValues({
         _fingerprint: _fp,
         message: truncatedMessage,
         stack: stack || "",
@@ -1405,12 +1416,13 @@ var blackbox = {
           timestamp: (/* @__PURE__ */ new Date()).toISOString(),
           language: navigator.language
         }, _config.buildSha ? { buildSha: _config.buildSha } : {}), _config.nodeEnv ? { nodeEnv: _config.nodeEnv } : {}),
-        sessionId: _sessionId,
+        sessionId: _sessionId
+      }, _config.sessionTag ? { sessionTag: _config.sessionTag } : {}), {
         schemaVersion: _config.schemaVersion,
         environment: _config.environment || null,
         tags: _config.tags || {},
         user: _config.user || null
-      };
+      });
       _errors.push(entry);
       if (_errors.length > 50) _errors.shift();
       recentSlot.entry = entry;
@@ -1421,6 +1433,25 @@ var blackbox = {
       if (_onErrorCallback) {
         try {
           _onErrorCallback(entry);
+        } catch (e) {
+        }
+      }
+      if (_config.failFast && !_internal) {
+        try {
+          if (typeof window !== "undefined" && !window.__BB_FAIL_FAST_TRIPPED__) {
+            const trip = {
+              fingerprint: _fp,
+              message: truncatedMessage,
+              source,
+              recordedAt: (/* @__PURE__ */ new Date()).toISOString(),
+              sessionTag: _config.sessionTag || null
+            };
+            window.__BB_FAIL_FAST_TRIPPED__ = trip;
+            try {
+              window.dispatchEvent(new CustomEvent("blackbox:fail-fast", { detail: trip }));
+            } catch (e) {
+            }
+          }
         } catch (e) {
         }
       }

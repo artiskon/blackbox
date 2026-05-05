@@ -70,6 +70,13 @@ const fs = bbWrapWrites({ addDoc, setDoc, updateDoc, deleteDoc });
 
 **Safe to call from shared client/server modules.** As of v1.9.1, `bbWrapWrites` short-circuits to a passthrough on the server (returns the input fns unchanged), so the call works at module top in any file imported by both client components and Next.js App Router route handlers — no `typeof window` guard needed at the call site.
 
+**`invalid-argument` introspection (v1.9.4).** When the wrapped write rejects with Firestore's `invalid-argument` (e.g. an `undefined` value somewhere in the payload), the recorded error context carries:
+
+- `firstUndefinedPath` — the dotted/indexed path within the document of the first undefined value (e.g. `sections[5].subtitle`). Firestore's own error tells you which document was rejected; this tells you which field.
+- `payloadShape` — top 2 levels of the payload, type-only (no values). Lets you triage without reading the source.
+- `writeFields` / `undefinedFields` — top-level key list and the subset that were undefined (carried over from v1.9.0).
+- `callerFrame` — the first non-framework JS frame from the wrapped call site (e.g. `ProposalEditor.tsx:819:24`). Same `extractTopAppFrame` extraction as `console.error`. Captured BEFORE the SDK call so the app frame survives the await.
+
 ## Object Storage Wrapper (Cloudflare R2 / S3 / GCS)
 
 Tag fetches against object storage so failures filter cleanly with `bb-check --source=storage` instead of getting lost in generic network noise:
@@ -128,6 +135,25 @@ bbOnSnapshot(
 );
 ```
 
+## Audit-Runner Integration (Playwright / unattended UI checks)
+
+When BlackBox is being driven by an unattended browser-automation runner — e.g. the DigitalDen ui-check Playwright runner that exercises every route after a deploy — two globals let the runner correlate errors to its own session and halt early on the first runtime failure.
+
+```javascript
+// In the runner, BEFORE the page loads:
+await context.addInitScript((tag) => {
+  window.__BB_SESSION_TAG__ = tag;       // unique correlation token for this audit run
+  window.__BB_FAIL_FAST__ = true;        // stop on the first runtime error
+}, `audit-${Date.now()}-${randomUUID()}`);
+```
+
+BlackBox reads both at `init()` and:
+
+- **Persists `sessionTag`** as a top-level field on each new error doc, plus `lastSeenSessionTag` on the update path so a re-fire of a pre-existing fingerprint also surfaces in the runner's window. Filter with `where('sessionTag', '==', tag)` (or with `where('lastSeenSessionTag', '==', tag)` to also catch re-fires of older fingerprints).
+- **Trips fail-fast** on the first non-internal error: sets `window.__BB_FAIL_FAST_TRIPPED__ = { fingerprint, message, source, recordedAt, sessionTag }` and dispatches `CustomEvent('blackbox:fail-fast', { detail })` on `window`. Internal-frame-only errors (framework warnings) never trip. BB does not throw — the runner controls halt.
+
+Real-user sessions should never enable `failFast`. The `addInitScript` pattern keeps it scoped to the runner and never reaches production builds.
+
 ## CLI Tools
 
 | Command | Description |
@@ -183,6 +209,8 @@ BlackBox is designed with privacy as a default:
 | `consoleIgnorePatterns` | `[...]` | Console messages matching these patterns are silently dropped |
 | `errorExcludePatterns` | `[]` | Errors matching these patterns are dropped entirely (e.g. `['fbcdn.net']`) |
 | `firestoreFns` | `null` | Pass Firestore SDK functions to avoid module duplication (see Quick Start) |
+| `sessionTag` | `null` | String correlation token persisted as a top-level field on each error doc. Auto-read from `window.__BB_SESSION_TAG__` if not passed. Used by audit runners (e.g. DigitalDen ui-check) to filter `__blackbox` by their own session and ignore concurrent real-user traffic. Trimmed to 64 chars |
+| `failFast` | `false` | When true, BB sets `window.__BB_FAIL_FAST_TRIPPED__` and dispatches a `blackbox:fail-fast` CustomEvent on the first non-internal error captured. Auto-enabled when `window.__BB_FAIL_FAST__` is truthy at init. Intended for unattended audit runners — never enable in real-user sessions |
 | `environment` | `null` | Free-form label (`'development'`, `'staging'`) tagged on every doc and surfaced in `bb-check` |
 | `buildSha` | auto | Identifies the deploy. Auto-detected from `NEXT_PUBLIC_BUILD_SHA`, `VERCEL_GIT_COMMIT_SHA`, `NETLIFY_COMMIT_REF`, or `GITHUB_SHA`. Lets you tell stale errors from fresh ones |
 | `nodeEnv` | auto | Override for `process.env.NODE_ENV`. Auto-detected; rarely needed |

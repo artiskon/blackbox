@@ -185,6 +185,29 @@ const blackbox = {
       }
     } catch { /* process not available */ }
 
+    // Pick up runner-supplied tags from the global scope. The DigitalDen
+    // ui-check runner injects these via Playwright's addInitScript before
+    // the page boots, so they're available before init() runs. Both are
+    // explicitly optional and only read once — re-init would re-read.
+    //   __BB_SESSION_TAG__ : a unique correlation token for this audit run.
+    //                       Persists on every error doc as `sessionTag` so
+    //                       the runner can filter __blackbox by its own
+    //                       session, ignoring concurrent real-user activity.
+    //   __BB_FAIL_FAST__   : when truthy, BB sets window.__BB_FAIL_FAST_TRIPPED__
+    //                       (with details) and dispatches a 'blackbox:fail-fast'
+    //                       CustomEvent on the first recorded error. The
+    //                       runner watches for either signal and halts.
+    try {
+      if (typeof window !== 'undefined') {
+        if (!_config.sessionTag && typeof window.__BB_SESSION_TAG__ === 'string') {
+          _config.sessionTag = window.__BB_SESSION_TAG__.trim().slice(0, 64) || null;
+        }
+        if (_config.failFast === undefined && window.__BB_FAIL_FAST__) {
+          _config.failFast = true;
+        }
+      }
+    } catch { /* ignore — sandboxed iframes can throw on window access */ }
+
     _sessionId = generateSessionId();
 
     // Recover breadcrumbs from previous session saved on unload
@@ -669,6 +692,7 @@ const blackbox = {
           ...(_config.nodeEnv ? { nodeEnv: _config.nodeEnv } : {})
         },
         sessionId: _sessionId,
+        ...(_config.sessionTag ? { sessionTag: _config.sessionTag } : {}),
         schemaVersion: _config.schemaVersion,
         environment: _config.environment || null,
         tags: _config.tags || {},
@@ -695,6 +719,32 @@ const blackbox = {
 
       if (_onErrorCallback) {
         try { _onErrorCallback(entry); } catch { /* ignore */ }
+      }
+
+      // Fail-fast trip: when armed, expose the captured error to the host
+      // (typically the ui-check Playwright runner) so it can halt the route
+      // capture early instead of waiting for the post-settle Firestore
+      // poll. Two surfaces: a window flag (cheap to poll) and a CustomEvent
+      // (cheap to listen for). Skip if internal: true — those are framework
+      // warnings, not app bugs the runner should halt on. We do NOT throw
+      // here; throwing would re-enter the BB capture path via window.onerror
+      // / unhandledrejection and risk recursion. The runner controls halt.
+      if (_config.failFast && !_internal) {
+        try {
+          if (typeof window !== 'undefined' && !window.__BB_FAIL_FAST_TRIPPED__) {
+            const trip = {
+              fingerprint: _fp,
+              message: truncatedMessage,
+              source,
+              recordedAt: new Date().toISOString(),
+              sessionTag: _config.sessionTag || null,
+            };
+            window.__BB_FAIL_FAST_TRIPPED__ = trip;
+            try {
+              window.dispatchEvent(new CustomEvent('blackbox:fail-fast', { detail: trip }));
+            } catch { /* CustomEvent unavailable in some environments */ }
+          }
+        } catch { /* ignore */ }
       }
 
       _notifySubscribers();

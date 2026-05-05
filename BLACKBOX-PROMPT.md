@@ -82,6 +82,7 @@ The output also includes a `correlations` block. Pay attention to:
 - `same_path_session` — same page + same session, likely one flow
 - `multi_path` — same fingerprint on multiple routes
 - `url_host_cluster` — multiple fingerprints all hitting the same hostname (almost always ONE upstream root cause)
+- `invalid_argument_cluster` — multiple Firestore-write fingerprints with `Unsupported field value: undefined` across DIFFERENT collections. Fix at the write/service layer (e.g. recursive `stripUndefinedDeep` before every write), not per-collection
 
 If the user shares a diagnostic report JSON (from the panel's copy button), use that instead. The report contains deduplicated errors, a chronological breadcrumb trail, suspicious silences, and health data.
 
@@ -92,7 +93,7 @@ When fixing errors found by BlackBox:
 - Look at the FULL breadcrumb trail. The cause is usually 2-5 actions before the crash
 - Errors sharing the same page path + session are likely related (one root cause). Look at the `correlations` block in the report for cross-error grouping
 - `resource_load` errors include `urlReachability`: `'ok'` (server returned 2xx — failure was image decode), `'http_error'` (server returned 4xx/5xx — see `httpStatus`), `'tag_content_type_mismatch'` (server returned 200 but the body is the wrong KIND for the host tag — `<img>` got `video/mp4` etc.; see `contentType` and `action_hint`), `'opaque_response'` (reachable but status couldn't be read client-side — check the Network tab), `'unreachable_origin'` (DNS / TLS / connection refused — hostname is dead). Probes also capture `responseHeaders` (cf-ray, content-type, etc.) and `responseBodyPreview` (first 200 bytes)
-- `console.error` errors include `context.callerFrame` — the first non-framework JS frame from the call site (e.g. `MediaLibrary.tsx:746:50`). Skips the `console.error` codebase grep step. From Firebase, errors also include `context.code` (e.g., `permission-denied`, `not-found`); if routed through `bbOnSnapshot`/`bbFirestoreOp`/`bbWrapWrites` the context also has `queryPath`, `queryFilters`, `documentPath`, and (on permission-denied) an `action_hint` pointing at `firestore.rules`
+- `console.error` errors include `context.callerFrame` — the first non-framework JS frame from the call site (e.g. `MediaLibrary.tsx:746:50`). Skips the `console.error` codebase grep step. From Firebase, errors also include `context.code` (e.g., `permission-denied`, `not-found`); if routed through `bbOnSnapshot`/`bbFirestoreOp`/`bbWrapWrites` the context also has `queryPath`, `queryFilters`, `documentPath`, `callerFrame` (the app frame that called the wrapped write), and (on permission-denied) an `action_hint` pointing at `firestore.rules`. For `invalid-argument` writes, the context additionally carries `firstUndefinedPath` (the dotted/indexed path within the document, e.g. `sections[5].subtitle`), `payloadShape` (top 2 levels of the payload, type-only — no values), `writeFields`, and `undefinedFields`. Jump straight to `firstUndefinedPath` instead of grepping the calling service or writing a wholesale `stripUndefinedDeep`
 - Errors with `lastSeenSessionId` different from current session may be stale. Compare `metadata.buildSha` to current commit to confirm
 - Errors with `internal: true` had a stack of only framework frames — usually framework warnings, not app bugs. Ignore unless `--include-internal` shows they're spiking
 
@@ -140,6 +141,7 @@ What BlackBox captures:
 - Storage failures (R2 / S3 / GCS) with `source: 'storage'` when fetched through `bbR2Fetch`
 - Firebase/Firestore errors with error code, document path, and (for queries via `bbOnSnapshot`/`bbFirestoreOp`) auto-extracted query path + filters
 - Silent Firestore write failures (when wrapped via `bbWrapWrites`) including permission-denied that was never `.catch`'d
+- For Firestore `invalid-argument` errors (writes through `bbWrapWrites` / `bbFirestoreOp`): `context.firstUndefinedPath` (dotted/indexed path of the first undefined value, e.g. `sections[5].subtitle`), `context.payloadShape` (top 2 levels, type-only), `context.callerFrame` (the app frame that called the wrapped write)
 - React component crashes via error boundary
 - Breadcrumbs: clicks (with data-bb attributes), navigation, network, forms, custom logs
 - Suspicious silences: buttons clicked with no followup action
@@ -167,5 +169,7 @@ Config options (pass to `blackbox.init()`):
 - `buildSha` — deploy identifier (auto-detected from common host env vars; surfaces in `bb-check`)
 - `nodeEnv` — override for `process.env.NODE_ENV` (auto-detected; rarely needed)
 - `tags: { env: 'dev' }` — arbitrary metadata on every doc
+- `sessionTag` — correlation token persisted as top-level `sessionTag` (and `lastSeenSessionTag` on updates). Auto-read from `window.__BB_SESSION_TAG__`. Used by audit runners (Playwright / ui-check) to filter `__blackbox` by their own session
+- `failFast` — boolean. When true, BB sets `window.__BB_FAIL_FAST_TRIPPED__` and fires a `blackbox:fail-fast` CustomEvent on the first non-internal error. Auto-on when `window.__BB_FAIL_FAST__` is truthy at init. Never use in real-user sessions
 
 Panel: click the BB badge (bottom-right) or press Ctrl+Shift+B. Copy button in panel header produces a compact JSON diagnostic report. Internal errors are hidden by default with a toggle to reveal.

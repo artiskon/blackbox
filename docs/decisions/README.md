@@ -63,9 +63,20 @@ Required sections:
 - [0021 — Underscore-prefixed context keys are ephemeral](0021-ephemeral-context-keys.md)
 - (also touches ADR-0007 / ADR-0014 / ADR-0016 — see "Subsequent feedback" sections in each)
 
+### v1.9.4
+
+- [0022 — Recursive payload introspection on Firestore `invalid-argument`](0022-firestore-invalid-argument-payload-introspection.md)
+- [0023 — Panel cascade dedup via tail-substring matching + `uniqueIncidents`](0023-cascade-dedup-tail-substring.md)
+- [0024 — `invalid_argument_cluster` correlator + `fingerprint` in panel report](0024-invalid-argument-cluster-correlator.md)
+- [0025 — Runner-supplied `sessionTag` + `failFast` trip via window globals](0025-runner-session-tag-and-fail-fast.md)
+- (also touches ADR-0009 / ADR-0016 — see "Subsequent feedback" sections in each)
+
 ### Deferred (recurring asks we have NOT shipped)
 
 - [0017 — React fiber component lineage on resource_load](0017-deferred-react-fiber-component-lineage.md)
 - [0018 — Server-log correlation for /api/* errors](0018-deferred-server-log-correlation.md)
 - [0019 — Sourcemap-aware stack-trace resolution](0019-deferred-sourcemap-aware-stack-traces.md)
 - [0020 — Firestore rules-trace plugin](0020-deferred-firestore-rules-trace.md)
+- [0026 — Browser-side / ingestion-time sourcemap resolution (runner-integration take)](0026-deferred-runtime-sourcemap-resolution.md)
+- [0027 — Recurrence-pattern ADR suggestion in CLI / panel](0027-deferred-recurrence-adr-suggestion.md)
+- [0028 — `@artiskon/blackbox-mcp` server package](0028-deferred-blackbox-mcp-server.md)
