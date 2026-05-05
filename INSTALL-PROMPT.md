@@ -8,6 +8,7 @@ Install and set up BlackBox error monitoring in this app. Follow these steps exa
 
 1. Install from GitHub:
    npm install github:artiskon/blackbox
+   (or pin to a specific tag, e.g. `npm install github:artiskon/blackbox#v1.9.4` — release tags are published from v1.9.4 onward)
 
 2. Find the app's Firestore db instance (look for where firebase/firestore is initialized). If the app uses Firebase Auth, also find the auth instance.
 
@@ -79,5 +80,8 @@ Do NOT modify any BlackBox source files. Just install, wire up, and verify.
 
 To pull the latest version of BlackBox, run:
    npm update @artiskon/blackbox
+
+If your `package.json` pins a specific tag (e.g. `github:artiskon/blackbox#v1.9.4`), bump the tag in `package.json` first, then run `npm install`. List published tags with:
+   gh api repos/artiskon/blackbox/tags --jq '.[].name'
 
 This replaces the package files only. No changes needed to your app's setup code unless told otherwise.

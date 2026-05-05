@@ -22,7 +22,11 @@ If any of these files are missing or misconfigured, fix them before debugging.
 Look for `@artiskon/blackbox` in `package.json` dependencies. If missing:
 
 ```bash
+# latest (HEAD of main)
 npm install github:artiskon/blackbox
+
+# or pin to a specific release tag (v1.9.4 onward are tagged)
+npm install github:artiskon/blackbox#v1.9.4
 ```
 
 ## Step 2: Check if BlackBox is set up
