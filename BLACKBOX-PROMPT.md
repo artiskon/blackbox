@@ -26,7 +26,7 @@ Look for `@artiskon/blackbox` in `package.json` dependencies. If missing:
 npm install github:artiskon/blackbox
 
 # or pin to a specific release tag (v1.9.4 onward are tagged)
-npm install github:artiskon/blackbox#v1.9.4
+npm install github:artiskon/blackbox#v1.9.5
 ```
 
 ## Step 2: Check if BlackBox is set up
@@ -176,4 +176,4 @@ Config options (pass to `blackbox.init()`):
 - `sessionTag` — correlation token persisted as top-level `sessionTag` (and `lastSeenSessionTag` on updates). Auto-read from `window.__BB_SESSION_TAG__`. Used by audit runners (Playwright / ui-check) to filter `__blackbox` by their own session
 - `failFast` — boolean. When true, BB sets `window.__BB_FAIL_FAST_TRIPPED__` and fires a `blackbox:fail-fast` CustomEvent on the first non-internal error. Auto-on when `window.__BB_FAIL_FAST__` is truthy at init. Never use in real-user sessions
 
-Panel: click the BB badge (bottom-right) or press Ctrl+Shift+B. Copy button in panel header produces a compact JSON diagnostic report. Internal errors are hidden by default with a toggle to reveal.
+Panel: click the launcher dot (bottom-left corner — 8×8 green when no errors, expands to a 22×22 amber/red number badge when errors arrive, single ripple pulse on each new error) or press Ctrl+Shift+B. Copy button in panel header produces a compact JSON diagnostic report. Internal errors are hidden by default with a toggle to reveal.

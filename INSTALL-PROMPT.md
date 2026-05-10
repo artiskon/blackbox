@@ -8,7 +8,7 @@ Install and set up BlackBox error monitoring in this app. Follow these steps exa
 
 1. Install from GitHub:
    npm install github:artiskon/blackbox
-   (or pin to a specific tag, e.g. `npm install github:artiskon/blackbox#v1.9.4` — release tags are published from v1.9.4 onward)
+   (or pin to a specific tag, e.g. `npm install github:artiskon/blackbox#v1.9.5` — release tags are published from v1.9.4 onward)
 
 2. Find the app's Firestore db instance (look for where firebase/firestore is initialized). If the app uses Firebase Auth, also find the auth instance.
 
@@ -53,9 +53,10 @@ Install and set up BlackBox error monitoring in this app. Follow these steps exa
 
 11. Verify setup:
     - Open the app in browser
-    - A green circle with "0" should appear at bottom-right
+    - A small green dot (8×8px) should appear flush in the bottom-left corner
     - Click it to open the BlackBox panel
-    - Trigger a test error to confirm it captures it
+    - Trigger a test error — the dot should grow into an amber/red number badge and pulse once
+    - The panel header has a Copy button that produces a JSON diagnostic report
 
 Do NOT modify any BlackBox source files. Just install, wire up, and verify.
 
@@ -81,7 +82,7 @@ Do NOT modify any BlackBox source files. Just install, wire up, and verify.
 To pull the latest version of BlackBox, run:
    npm update @artiskon/blackbox
 
-If your `package.json` pins a specific tag (e.g. `github:artiskon/blackbox#v1.9.4`), bump the tag in `package.json` first, then run `npm install`. List published tags with:
+If your `package.json` pins a specific tag (e.g. `github:artiskon/blackbox#v1.9.5`), bump the tag in `package.json` first, then run `npm install`. List published tags with:
    gh api repos/artiskon/blackbox/tags --jq '.[].name'
 
 This replaces the package files only. No changes needed to your app's setup code unless told otherwise.

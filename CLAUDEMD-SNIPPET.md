@@ -1,4 +1,11 @@
-## BlackBox v1.9.4 — Dev-Time Error Monitoring
+## BlackBox v1.9.5 — Dev-Time Error Monitoring
+
+### What's new in v1.9.5
+
+UX-only release. The popup design is unchanged; only the floating launcher icon was rewritten to be far less intrusive on the host app.
+
+- **Corner-flush launcher.** The 40×40 bottom-right circle with the "BB" wordmark is gone. Idle (zero unique errors) is now an 8×8px green dot flush to the bottom-left corner, no padding, no shadow, no text. On the first error it expands to a 22×22px rounded square showing the integer count, color-coded amber (1–5) / red (6+). Single ripple pulse on each new-error arrival, then idle again. See ADR-0029.
+- **Click opens the panel exactly as before.** No other icon-level gestures — the panel is the single entry point to inspecting and copying errors. The yellow silenced-clicks indicator survives, scaled to the new size.
 
 ### What's new in v1.9.4
 
@@ -120,13 +127,13 @@ Two themes in this release: Firestore-write debugging wins from a v1.9.3 dogfood
 - **Use both:** `bbTrackAuth` for the activity trail, `setUser` for error attribution.
 
 ### Panel capabilities:
-The floating panel (bottom-right badge) includes:
+The launcher icon sits flush in the bottom-left corner: 8×8 green dot when there are no errors, expanding to a 22×22 number badge (amber 1–5, red 6+) when errors arrive. Click it to open the panel, which includes:
 - **Live tab:** real-time errors with expandable breadcrumb trails
 - **History tab:** persisted errors from Firestore, timeline view with time-range selector
 - **Health tab:** HEALTHY/WARNING/UNHEALTHY verdict, stats, top errors
 - **Fullscreen mode:** expand toggle in header
 - **Search:** filter errors by text across message, source, path
-- **Copy:** JSON and Markdown copy buttons per error
+- **Copy:** JSON and Markdown copy buttons per error; JSON full-report copy in panel header
 - **Stack traces:** collapsible, monospace formatted
 - **Breadcrumb filter chips:** toggle click, network, error, navigation, performance, custom
 - **Keyboard shortcut:** Ctrl+Shift+B / Cmd+Shift+B to toggle

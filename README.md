@@ -9,7 +9,7 @@ Dev-time error monitoring and activity recording for React/Firebase apps. BlackB
 npm install github:artiskon/blackbox
 
 # pin to a specific release tag (recommended for reproducible builds)
-npm install github:artiskon/blackbox#v1.9.4
+npm install github:artiskon/blackbox#v1.9.5
 ```
 
 Release tags are published from `v1.9.4` onward. Older versions live on `main` history but aren't tagged — pin to a commit SHA if you need an earlier point release.

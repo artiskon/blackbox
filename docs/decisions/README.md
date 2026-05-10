@@ -71,6 +71,10 @@ Required sections:
 - [0025 — Runner-supplied `sessionTag` + `failFast` trip via window globals](0025-runner-session-tag-and-fail-fast.md)
 - (also touches ADR-0009 / ADR-0016 — see "Subsequent feedback" sections in each)
 
+### v1.9.5
+
+- [0029 — Minimal corner-flush launcher icon (idle dot, active square, pulse, right-click copy)](0029-minimal-launcher-icon.md)
+
 ### Deferred (recurring asks we have NOT shipped)
 
 - [0017 — React fiber component lineage on resource_load](0017-deferred-react-fiber-component-lineage.md)

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import blackbox from '../core/blackbox.js';
 
 function timeAgo(isoString) {
@@ -152,6 +152,9 @@ function BlackBoxPanel() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [expandedStacks, setExpandedStacks] = useState(new Set());
+  // Launcher pulse on new error
+  const [pulseKey, setPulseKey] = useState(0);
+  const prevUniqueCountRef = useRef(0);
   const [activeFilters, setActiveFilters] = useState(new Set(BREADCRUMB_FILTER_TYPES));
   const [reportCopied, setReportCopied] = useState(false);
   const [reportEmpty, setReportEmpty] = useState(false);
@@ -351,7 +354,7 @@ function BlackBoxPanel() {
     // -- Build report --
     const report = stripNulls({
       _type: 'BlackBox Diagnostic Report',
-      _version: '1.9.4',
+      _version: '1.9.5',
       _generatedAt: new Date().toISOString(),
       _instructions: 'Errors are deduplicated (count = occurrences). Cross-channel cascade dedup merges firebase-wrapper + console.error rethrows of the same incident — sources[] lists the channels it fired on. session.uniqueIncidents is the post-dedup distinct-incident count; session.errorCount is the raw record count. Each error carries fingerprint for direct `bb-ack <fp>`. For source:firebase invalid-argument errors, context.firstUndefinedPath gives the dotted/indexed path within the document (e.g. sections[5].subtitle); context.payloadShape sketches the top 2 levels; context.callerFrame is the app frame that called the wrapped write. Breadcrumbs are the single chronological trail. Silences are buttons clicked with no followup. History is persisted errors grouped by fingerprint. Health is a 24h summary. Errors with internal:true had a stack of only framework frames. urlReachability on resource_load tells you DNS vs CORS vs HTTP failure. session.buildSha identifies the build that produced this report.',
       session: stripNulls({
@@ -439,6 +442,16 @@ function BlackBoxPanel() {
     }
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
+  }, []);
+
+  // Inject pulse keyframes once. CSS @keyframes can't live in inline style props.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    if (document.getElementById('bb-launcher-keyframes')) return;
+    const style = document.createElement('style');
+    style.id = 'bb-launcher-keyframes';
+    style.textContent = '@keyframes bb-pulse-ring{0%{transform:scale(1);opacity:0.7}100%{transform:scale(2.6);opacity:0}}';
+    document.head.appendChild(style);
   }, []);
 
   async function loadHistory() {
@@ -562,21 +575,51 @@ function BlackBoxPanel() {
   else if (uniqueCount >= 1) badgeBg = '#f59e0b';
 
   const badgeText = uniqueCount > 99 ? '99+' : String(uniqueCount);
+  const idle = uniqueCount === 0;
+
+  // Pulse a single ripple whenever the unique count increases.
+  useEffect(() => {
+    if (uniqueCount > prevUniqueCountRef.current) {
+      setPulseKey(k => k + 1);
+    }
+    prevUniqueCountRef.current = uniqueCount;
+  }, [uniqueCount]);
 
   if (!isOpen) {
+    const size = idle ? 8 : 22;
+    const borderRadius = idle ? '50%' : '3px';
     return (
-      <div data-bb-panel onClick={() => setIsOpen(true)} style={{
-        position: 'fixed', bottom: '16px', right: '16px', zIndex: 99999,
-        width: '40px', height: '40px', borderRadius: '50%',
-        background: badgeBg, color: 'white',
-        display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-        cursor: 'pointer', boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
-        fontFamily: 'system-ui, sans-serif', userSelect: 'none', lineHeight: 1,
-      }}>
-        <span style={{ fontSize: errorCount > 99 ? '11px' : '16px', fontWeight: 'bold' }}>{badgeText}</span>
-        <span style={{ fontSize: '8px', opacity: 0.9, marginTop: '1px' }}>BB</span>
-        {hasSilences && (
-          <div style={{ position: 'absolute', top: '-2px', right: '-2px', width: '10px', height: '10px', borderRadius: '50%', background: '#facc15', border: '2px solid white' }} />
+      <div
+        data-bb-panel
+        onClick={() => setIsOpen(true)}
+        title={idle ? 'BlackBox: no errors' : `BlackBox: ${badgeText} error${uniqueCount === 1 ? '' : 's'} — click to open`}
+        style={{
+          position: 'fixed', bottom: 0, left: 0, zIndex: 99999,
+          width: `${size}px`, height: `${size}px`, borderRadius,
+          background: badgeBg, color: 'white',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          cursor: 'pointer', boxShadow: idle ? 'none' : '0 1px 4px rgba(0,0,0,0.4)',
+          fontFamily: 'system-ui, sans-serif', userSelect: 'none', lineHeight: 1,
+          transition: 'width 180ms ease, height 180ms ease, border-radius 180ms ease',
+          WebkitTapHighlightColor: 'transparent',
+        }}
+      >
+        {!idle && (
+          <span style={{ fontSize: uniqueCount > 99 ? '9px' : '12px', fontWeight: 'bold' }}>{badgeText}</span>
+        )}
+        {pulseKey > 0 && !idle && (
+          <div
+            key={pulseKey}
+            style={{
+              position: 'absolute', inset: 0, borderRadius: 'inherit',
+              border: `2px solid ${badgeBg}`, pointerEvents: 'none',
+              animation: 'bb-pulse-ring 800ms ease-out forwards',
+              transformOrigin: 'center',
+            }}
+          />
+        )}
+        {hasSilences && !idle && (
+          <div style={{ position: 'absolute', top: '-3px', right: '-3px', width: '7px', height: '7px', borderRadius: '50%', background: '#facc15', border: '1px solid white' }} />
         )}
       </div>
     );
