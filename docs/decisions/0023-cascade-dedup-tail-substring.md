@@ -65,8 +65,10 @@ of the report explains the difference.
   unrelated errors that happen to share a suffix in the same quarter-second
   (these would also need to share a 200-char prefix or tail to merge).
 - We chose to expose BOTH `errorCount` and `uniqueIncidents` rather than
-  swap. `errorCount` remains useful for "how chatty is this session" and
-  for matching what the panel badge displays in the corner.
+  swap. `errorCount` remains useful for "how chatty is this session".
+  (Corrected 2026-09-13: this bullet used to say it also matches the panel
+  badge. It doesn't: the badge shows the unique count, excluding
+  framework-internal errors, per ADR-0029 / ADR-0001.)
 - We did NOT go through `Error.cause` chains. Modern apps frequently use
   `throw new Error('Save failed', { cause: e })`, but the pre-existing
   cascades were plain rethrows, not cause-wrapped. Tail matching catches
@@ -82,11 +84,18 @@ of the report explains the difference.
   Mitigation: when the new dedup misfires, `sources[]` will list
   channels that don't make sense together; an agent reading the report
   can spot it.
-- We did NOT change the in-memory dedup in `blackbox.js` (`_recentErrors`
-  with the existing 200ms window and same-fingerprint rule). That layer
-  serves a different purpose (storm suppression on repeated identical
-  errors); collapsing cross-source cascades there would lose data the
-  panel needs. The panel-export dedup is correctly the place to merge.
+- We did NOT change the in-memory dedup in `blackbox.js` (`_recentErrors`,
+  200ms window). That layer merges the same normalized message arriving
+  from DIFFERENT channels (console.error + window.onerror +
+  unhandled_promise) into one entry with `firedAs[]`, plus exact
+  same-source repeats (same stack and context, e.g. React 18 dev
+  dispatching one render crash to window 'error' twice). Same-source
+  repeats with a different stack or context stay separate entries, subject
+  to the 5-in-5s storm collapse. It serves a
+  different purpose; collapsing cross-source cascades with different
+  prefixes there would lose data the panel needs. (Wording corrected
+  2026-09-13: it previously said "same-fingerprint rule", which never
+  matched the code.) The panel-export dedup is correctly the place to merge.
 - We did NOT auto-suppress the redundant cascade entries from the
   Firestore-persisted history. Persistence keeps the raw stream for
   forensic value; only the panel report — the AI-facing artifact —
@@ -109,3 +118,8 @@ of the report explains the difference.
   "what we did NOT do" note in the project-level discussion of v1.9.4
   feedback. The right answer is consumer-side categorization, not
   heuristic auto-collapse.
+- **2026-09-13 (unreleased, after v1.9.5; additive):** audit fixes around this dedup.
+  1. **Prefix floor.** The prefix-containment check had no length floor, so short or empty messages ("Failed", "") merged unrelated errors within 250ms. Prefix matching now needs a ≥30-char prefix, the same floor as the tail rule, and empty messages never match.
+  2. **In-memory layer matched message only.** `_recentErrors` dropped a same-source repeat of the same message within 200ms, e.g. several `bbOnSnapshot` listeners denied in one tick. A channel the slot hasn't seen yet still counts as a duplicate; a same-source repeat counts only when its stack and context also match the slot's first hit from that source (so React 18 dev's double window 'error' dispatch for one render crash stays one row), otherwise it goes through storm detection (Trade-offs bullet corrected above).
+  3. **Storm window is sliding.** It used to be tumbling from `firstSeen`, so a sustained loop re-admitted 5 fresh entries every 5s and pushed the root cause out of the 50-entry buffer. The storm stays open until the message is quiet for 5s; expired trackers are pruned once there are more than 100; `clearErrors()` resets dedup/storm state. Storm-collapsed rows show `xN` in the panel.
+  4. **Counts.** The panel now reads the full 50-entry core buffer (was 20) for its list, badge, footer and copied report. The Live footer reads `N unique · M total this session` when the raw `errorCount` exceeds the unique count (`errorCount` still includes internal errors and can exceed the buffer).

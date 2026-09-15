@@ -1,11 +1,17 @@
 #!/usr/bin/env node
 
 import { connectToFirestore } from './shared/firebase-connect.js';
-import { writeLog, checkCollectionSize } from './shared/utils.js';
+import { writeLog, checkCollectionSize, parseCliArgs } from './shared/utils.js';
 import { collection, query, where, getDocs, orderBy, limit, Timestamp } from 'firebase/firestore';
+
+const USAGE = `Usage: bb-health
+  Summarize errors seen in the last 24 hours into dev-logs/bb-health.json
+  with a HEALTHY / WARNING / UNHEALTHY verdict.
+  -h, --help                Show this help`;
 
 async function main() {
   try {
+    parseCliArgs({}, USAGE);
     const { db, collectionName, isAdmin } = await connectToFirestore();
     await checkCollectionSize(db, collectionName, isAdmin);
 
@@ -13,10 +19,17 @@ async function main() {
 
     let errorDocs, activityDocs;
 
+    // Errors are windowed by lastSeen, not createdAt: error docs are deduped
+    // by fingerprint and a re-fire never touches createdAt, so a createdAt
+    // window hides an error first seen >24h ago that is still firing (same
+    // trap ADR-0025 fixed for sessionTag). Activity docs aren't deduped, so
+    // createdAt is right for them. orderBy lastSeen desc lets the existing
+    // type ASC + lastSeen DESC index (the bb-check one) serve the query.
     if (isAdmin) {
       const errorSnap = await db.collection(collectionName)
         .where('type', '==', 'error')
-        .where('createdAt', '>=', twentyFourHoursAgo)
+        .where('lastSeen', '>=', twentyFourHoursAgo)
+        .orderBy('lastSeen', 'desc')
         .get();
       errorDocs = errorSnap.docs.map(d => d.data());
 
@@ -31,7 +44,8 @@ async function main() {
       const errorQ = query(
         collection(db, collectionName),
         where('type', '==', 'error'),
-        where('createdAt', '>=', ts)
+        where('lastSeen', '>=', ts),
+        orderBy('lastSeen', 'desc')
       );
       const errorSnap = await getDocs(errorQ);
       errorDocs = errorSnap.docs.map(d => d.data());
@@ -45,7 +59,7 @@ async function main() {
       activityDocs = actSnap.docs.map(d => d.data());
     }
 
-    // Calculate total occurrences
+    // Total occurrences. These are lifetime counts on each doc, not 24h counts.
     const totalErrors = errorDocs.reduce((sum, d) => sum + (d.occurrences || 1), 0);
     const uniqueErrors = errorDocs.length;
 
@@ -87,7 +101,7 @@ async function main() {
     // Verdict
     let verdict;
     if (uniqueErrors === 0) {
-      verdict = 'HEALTHY: No errors in the last 24 hours';
+      verdict = 'HEALTHY: No errors seen in the last 24 hours';
     } else if (systemic.length > 0) {
       verdict = `UNHEALTHY: ${uniqueErrors} unique error(s), ${systemic.length} systemic issue(s) requiring attention`;
     } else {
@@ -115,7 +129,7 @@ async function main() {
     console.log(`\n[BlackBox] Health Report → dev-logs/bb-health.json`);
     console.log(`\n  Verdict: ${verdict}`);
     console.log(`  Unique errors (24h): ${uniqueErrors}`);
-    console.log(`  Total occurrences:   ${totalErrors}`);
+    console.log(`  Total occurrences:   ${totalErrors} (lifetime, of errors seen in 24h)`);
     if (topErrors.length > 0) {
       console.log(`\n  Top errors:`);
       topErrors.forEach((e, i) => {
@@ -129,8 +143,11 @@ async function main() {
   } catch (e) {
     if (e.message?.includes('index') || e.message?.includes('requires an index')) {
       console.error('\n[BlackBox] Firestore composite index required for bb:health.');
-      console.error('Add this to your firestore.indexes.json and run: firebase deploy --only firestore:indexes\n');
-      console.error(JSON.stringify({ collectionGroup: "__blackbox", queryScope: "COLLECTION", fields: [{ fieldPath: "type", order: "ASCENDING" }, { fieldPath: "createdAt", order: "ASCENDING" }] }, null, 2));
+      console.error('Add these to your firestore.indexes.json and run: firebase deploy --only firestore:indexes\n');
+      console.error(JSON.stringify([
+        { collectionGroup: "__blackbox", queryScope: "COLLECTION", fields: [{ fieldPath: "type", order: "ASCENDING" }, { fieldPath: "lastSeen", order: "DESCENDING" }] },
+        { collectionGroup: "__blackbox", queryScope: "COLLECTION", fields: [{ fieldPath: "type", order: "ASCENDING" }, { fieldPath: "createdAt", order: "ASCENDING" }] },
+      ], null, 2));
       console.error('\nOr click the link in the original error:', e.message);
     } else {
       console.error(`[BlackBox] bb-health failed: ${e.message}`);

@@ -122,9 +122,12 @@ onto the launcher.
 - Pulse uses a `@keyframes bb-pulse-ring` keyframe injected once into
   `document.head` (id `bb-launcher-keyframes`). Inline `style` props
   can't host `@keyframes`.
-- Pulse is triggered by a `useEffect` watching `uniqueCount`; when it
-  exceeds the ref-tracked previous value, `pulseKey` increments,
-  remounting the ring element so the animation restarts from frame 0.
+- Pulse is triggered by a `useEffect` watching `uniqueCount` and `isOpen`;
+  while the panel is closed and the count exceeds the ref-tracked previous
+  value, `pulseKey` increments, remounting the ring element so the
+  animation restarts from frame 0. Opening the panel resets `pulseKey` to 0
+  (arrivals seen in the open panel don't ripple, and the ripple doesn't
+  replay when the launcher remounts on close).
 
 ## Consequences
 
@@ -147,3 +150,36 @@ onto the launcher.
 If a future iteration wants to revive the wordmark or grow the idle
 footprint (e.g. for adoption nudges on first install), supersede this
 ADR with explicit reasoning. Don't silently revert.
+
+## Subsequent feedback
+
+- **2026-09-13 (unreleased, after v1.9.5; additive):** audit fixes; the
+  two-state launcher design, position and single-action rule are unchanged.
+  1. **Hidden until enabled.** The launcher and the Ctrl/Cmd+Shift+B
+     shortcut rendered even when `init()` never enabled BB (production end
+     users saw the dot). The panel now renders nothing, and leaves the
+     browser shortcut alone, until `blackbox.getSessionId()` is set. This
+     narrows the "dot doubles as a liveness signal" reasoning above to
+     "BB is loaded AND enabled".
+  2. **Accessible controls.** The launcher is a `<button>` (UA styles
+     reset, so no visual change) with an `aria-label` matching its title;
+     panel controls are Tab-reachable buttons; the panel is
+     `role="dialog"`. Esc closes the report overlay, then the delete
+     confirm, then the panel, but only when focus is inside the panel or on
+     the page body. The shortcut matches `e.code === 'KeyB'` or a
+     case-insensitive `e.key`, so it works with Caps Lock and macOS
+     Cmd+Shift.
+  3. **Works over host modals.** Launcher, panel and backdrop force
+     `pointer-events: auto` and stop immediate propagation of `pointerdown`
+     (plus `wheel` / `touchmove` on the panel), so they're usable while a
+     Radix/shadcn modal is open without dismissing it. Known limit: Radix
+     FocusScope still pulls keyboard focus back into the dialog.
+  4. **Pulse replay fixed** (implementation note above amended).
+  5. **Counts.** The badge's unique count excludes framework-internal
+     errors (ADR-0001), and reads the full 50-entry buffer (was 20).
+  6. **Panel content, not panel design.** Expanded error rows now also show
+     the full message, `action_hint` with a clickable `action_url`, and a
+     collapsible "Context (N)" list (non-underscore keys, values cut at 400
+     chars); failed Firestore queries show a "Query failed" block with a
+     "Create index" link. Layout and styling of the popup are otherwise
+     unchanged.

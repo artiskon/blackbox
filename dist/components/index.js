@@ -1,11 +1,12 @@
 "use client";
 import {
   blackbox_default
-} from "../chunk-WOIMV5D3.js";
+} from "../chunk-A3IAWLS3.js";
 import {
   __spreadProps,
-  __spreadValues
-} from "../chunk-W2CFSJ2O.js";
+  __spreadValues,
+  isIdLike
+} from "../chunk-3QPKAOHJ.js";
 
 // src/components/BlackBoxPanel.js
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -41,6 +42,9 @@ var breadcrumbLabel = {
   console: "Console",
   "console.error": "Console",
   "console.warn": "Warning",
+  warning: "Warning",
+  firebase: "Firebase",
+  performance: "Perf",
   form: "Form",
   resource: "Resource",
   system: "System",
@@ -57,14 +61,47 @@ function shortenUrl(url, max = 60) {
   return url.slice(0, keepHead) + "\u2026" + url.slice(-keepTail);
 }
 function bcSummary(bc) {
-  if (bc.type === "click") return `${bc.tag || "element"}${bc.id ? "#" + bc.id : ""} "${(bc.text || "").slice(0, 25)}"`;
+  if (bc.type === "click") return `${bc.tag || "element"}${bc.id ? "#" + bc.id : ""} "${(bc.text || bc.autoLabel || "").slice(0, 25)}"`;
   if (bc.type === "navigation") return `${bc.from || "?"} \u2192 ${bc.to || "?"}`;
   if (bc.type === "network") return `${bc.method || "GET"} ${shortenUrl(bc.url || "")} ${bc.status || ""}`;
   if (bc.type === "error") return (bc.message || "").slice(0, 40);
   return bc.action || bc.message || bc.url || bc.to || bc.tag || "";
 }
+function queryErrorOf(result) {
+  if (result == null ? void 0 : result.connected) return null;
+  return (result == null ? void 0 : result.error) || "Database query failed (persistence not initialized)";
+}
+var FIREBASE_CONSOLE_URL_RE = /https:\/\/console\.firebase\.google\.com[^\s"')]+/;
+function renderQueryError(msg) {
+  const url = (msg.match(FIREBASE_CONSOLE_URL_RE) || [])[0];
+  return /* @__PURE__ */ jsxs("div", { style: { padding: "8px 10px", borderRadius: "6px", background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", color: "#fca5a5", fontSize: "11px", whiteSpace: "pre-wrap", wordBreak: "break-word", userSelect: "text", textAlign: "left" }, children: [
+    /* @__PURE__ */ jsx("div", { style: { color: "#ef4444", fontWeight: "bold", marginBottom: "4px" }, children: "Query failed" }),
+    msg,
+    url && /* @__PURE__ */ jsx("div", { style: { marginTop: "6px" }, children: /* @__PURE__ */ jsx("a", { href: url, target: "_blank", rel: "noopener noreferrer", style: { color: "#a5b4fc", fontWeight: 600 }, children: "Create index \u2197" }) })
+  ] });
+}
+var _liveKeys = /* @__PURE__ */ new WeakMap();
+var _liveKeySeq = 0;
+function liveErrorKey(err) {
+  let key = _liveKeys.get(err);
+  if (!key) {
+    key = `live-${++_liveKeySeq}`;
+    _liveKeys.set(err, key);
+  }
+  return key;
+}
+function isolateFromHost(e) {
+  e.nativeEvent.stopImmediatePropagation();
+}
+function stripEphemeral(context) {
+  const out = {};
+  for (const [k, v] of Object.entries(context)) {
+    if (!k.startsWith("_")) out[k] = v;
+  }
+  return out;
+}
 function errorToJSON(err) {
-  return JSON.stringify(err, null, 2);
+  return JSON.stringify(err.context ? __spreadProps(__spreadValues({}, err), { context: stripEphemeral(err.context) }) : err, null, 2);
 }
 function errorToMarkdown(err) {
   var _a, _b;
@@ -101,7 +138,20 @@ ${err.stack}
   }
   return md;
 }
-var BREADCRUMB_FILTER_TYPES = ["click", "network", "error", "navigation", "performance", "custom"];
+function isInternal(err) {
+  return err.internal === true || err._internal === true;
+}
+var btnReset = {
+  background: "none",
+  border: "none",
+  margin: 0,
+  padding: 0,
+  color: "inherit",
+  fontFamily: "inherit",
+  fontSize: "inherit",
+  lineHeight: "inherit"
+};
+var rowBtnStyle = __spreadProps(__spreadValues({}, btnReset), { display: "block", width: "100%", boxSizing: "border-box", textAlign: "left" });
 var tabStyle = (active, hovered) => ({
   padding: "6px 12px",
   cursor: "pointer",
@@ -143,6 +193,7 @@ var searchInputStyle = {
   outline: "none"
 };
 function BlackBoxPanel() {
+  const [ready, setReady] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [tab, setTab] = useState("live");
@@ -155,22 +206,25 @@ function BlackBoxPanel() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [expandedHistory, setExpandedHistory] = useState(null);
+  const [historyError, setHistoryError] = useState(null);
   const [health, setHealth] = useState(null);
   const [healthLoading, setHealthLoading] = useState(false);
   const [timeline, setTimeline] = useState([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [timelineLoaded, setTimelineLoaded] = useState(false);
+  const [timelineError, setTimelineError] = useState(null);
   const [timelineMinutes, setTimelineMinutes] = useState(10);
+  const [timelineLoadedMinutes, setTimelineLoadedMinutes] = useState(null);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [clearSessionFeedback, setClearSessionFeedback] = useState(false);
-  const [deleteSuccess, setDeleteSuccess] = useState(false);
+  const [deleteMsg, setDeleteMsg] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [expandedStacks, setExpandedStacks] = useState(/* @__PURE__ */ new Set());
   const [pulseKey, setPulseKey] = useState(0);
   const prevUniqueCountRef = useRef(0);
-  const [activeFilters, setActiveFilters] = useState(new Set(BREADCRUMB_FILTER_TYPES));
+  const [hiddenTypes, setHiddenTypes] = useState(/* @__PURE__ */ new Set());
   const [reportCopied, setReportCopied] = useState(false);
   const [reportEmpty, setReportEmpty] = useState(false);
   const [reportText, setReportText] = useState(null);
@@ -226,6 +280,7 @@ function BlackBoxPanel() {
       if (bc.type === "click") {
         out.el = `${bc.tag || "element"}${bc.id ? "#" + bc.id : ""}${bc.dataBb ? "[data-bb=" + bc.dataBb + "]" : ""}`;
         if (bc.text) out.text = bc.text.slice(0, 30);
+        else if (bc.autoLabel) out.label = bc.autoLabel.slice(0, 30);
       } else if (bc.type === "navigation") {
         out.from = bc.from;
         out.to = bc.to;
@@ -268,11 +323,14 @@ function BlackBoxPanel() {
         const tsMs = new Date(ts).getTime();
         for (const [, existing] of grouped) {
           const existingNorm = stripUncaught((existing.message || "").slice(0, 200));
-          const matched = msgNorm === existingNorm || msgNorm.includes(existingNorm.slice(0, 40)) || existingNorm.includes(msgNorm.slice(0, 40)) || tailMatch(msgNorm, existingNorm);
+          const pa = existingNorm.slice(0, 40);
+          const pb = msgNorm.slice(0, 40);
+          const matched = msgNorm && existingNorm && (msgNorm === existingNorm || pa.length >= 30 && msgNorm.includes(pa) || pb.length >= 30 && existingNorm.includes(pb) || tailMatch(msgNorm, existingNorm));
           if (matched) {
             const existingTs = new Date(existing.timestamp || 0).getTime();
             if (Math.abs(tsMs - existingTs) < 250) {
               existing.count++;
+              if (!isInternal(err)) delete existing.internal;
               existing.sources = existing.sources || [existing.source];
               if (!existing.sources.includes(err.source)) existing.sources.push(err.source);
               merged = true;
@@ -283,7 +341,9 @@ function BlackBoxPanel() {
       }
       if (merged) continue;
       if (grouped.has(key)) {
-        grouped.get(key).count++;
+        const existing = grouped.get(key);
+        existing.count++;
+        if (!isInternal(err)) delete existing.internal;
         continue;
       }
       const entry = stripNulls(__spreadValues({
@@ -292,17 +352,14 @@ function BlackBoxPanel() {
         // Surface the in-memory fingerprint so consumers can `bb-ack <fp>`
         // straight from the exported report without re-running bb-check.
         fingerprint: err._fingerprint || void 0,
+        internal: isInternal(err) || void 0,
         stack: cleanStack(err.stack),
         path: err.path || err.url,
         timestamp: (_d = err.metadata) == null ? void 0 : _d.timestamp,
         count: 1
       }, err._stormCount ? { storm: true, stormCount: err._stormCount } : {}));
       if (err.context && Object.keys(err.context).length > 0) {
-        const ctx = {};
-        for (const [k, v] of Object.entries(err.context)) {
-          if (k.startsWith("_")) continue;
-          ctx[k] = v;
-        }
+        const ctx = stripEphemeral(err.context);
         if (typeof ctx.responseBody === "string" && ctx.responseBody.length > 400) {
           ctx.responseBody = ctx.responseBody.slice(0, 400) + "\u2026";
         }
@@ -356,11 +413,11 @@ function BlackBoxPanel() {
     });
     if (historyLoaded && historyErrors.length > 0) {
       let normalizeHistoryKey2 = function(msg, source) {
-        let m = (msg || "").slice(0, 100).toLowerCase();
-        m = m.replace(/\s*[#(]\d+[)]?\s*$/, "");
+        let m = (msg || "").slice(0, 1e3);
         m = m.replace(/https?:\/\/[^\s"']+/g, "<url>");
-        m = m.replace(/\b([a-zA-Z_]\w*)\/([\w]{16,28})\b/g, "$1/:docId");
-        return `${source}:${m}`;
+        m = m.replace(/\b([a-zA-Z_][a-zA-Z0-9_-]*)\/([\w-]{16,28})(?![\w-])/g, (x, coll, id) => isIdLike(id) ? `${coll}/:docId` : x);
+        m = m.replace(/\s*[#(](\d+)\)?\s*$/, (x, n) => +n >= 100 && +n <= 599 ? x : "");
+        return `${source}:${m.toLowerCase().slice(0, 100)}`;
       };
       var normalizeHistoryKey = normalizeHistoryKey2;
       const hGroups = /* @__PURE__ */ new Map();
@@ -395,8 +452,9 @@ function BlackBoxPanel() {
     }
   }
   const refresh = useCallback(() => {
+    setReady(!!blackbox_default.getSessionId());
     setErrorCount(blackbox_default.getErrorCount());
-    setErrors(blackbox_default.getRecentErrors(20));
+    setErrors(blackbox_default.getRecentErrors(50));
     setSilences(blackbox_default.getSuspiciousSilences());
   }, []);
   useEffect(() => {
@@ -406,14 +464,27 @@ function BlackBoxPanel() {
   }, [refresh]);
   useEffect(() => {
     function handleKey(e) {
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "B") {
+      var _a, _b, _c;
+      if (!blackbox_default.getSessionId()) return;
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.code === "KeyB" || ((_a = e.key) == null ? void 0 : _a.toLowerCase()) === "b")) {
         e.preventDefault();
         setIsOpen((prev) => !prev);
+        return;
+      }
+      if (e.key === "Escape" && isOpen) {
+        const inPanel = e.target === document.body || ((_c = (_b = e.target) == null ? void 0 : _b.closest) == null ? void 0 : _c.call(_b, "[data-bb-panel]"));
+        if (!inPanel) return;
+        if (reportText) setReportText(null);
+        else if (showClearConfirm) setShowClearConfirm(false);
+        else {
+          setIsOpen(false);
+          setIsExpanded(false);
+        }
       }
     }
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, []);
+  }, [isOpen, reportText, showClearConfirm]);
   useEffect(() => {
     if (typeof document === "undefined") return;
     if (document.getElementById("bb-launcher-keyframes")) return;
@@ -426,6 +497,7 @@ function BlackBoxPanel() {
     setHistoryLoading(true);
     const result = await blackbox_default.queryPersistedErrors(50);
     setHistoryErrors(result.errors || []);
+    setHistoryError(queryErrorOf(result));
     setHistoryLoaded(true);
     setHistoryLoading(false);
   }
@@ -437,14 +509,18 @@ function BlackBoxPanel() {
   }
   async function loadTimeline() {
     setTimelineLoading(true);
-    const result = await blackbox_default.queryTimeline(timelineMinutes);
+    const mins = timelineMinutes;
+    const result = await blackbox_default.queryTimeline(mins);
     setTimeline(result.events || []);
+    setTimelineError(queryErrorOf(result));
+    setTimelineLoadedMinutes(mins);
     setTimelineLoaded(true);
     setTimelineLoading(false);
   }
   function handleClearSession() {
     blackbox_default.clearErrors();
     setExpandedError(null);
+    setExpandedStacks(/* @__PURE__ */ new Set());
     setClearSessionFeedback(true);
     setTimeout(() => setClearSessionFeedback(false), 2e3);
   }
@@ -453,15 +529,24 @@ function BlackBoxPanel() {
     const result = await blackbox_default.clearPersistedErrors();
     setClearing(false);
     setShowClearConfirm(false);
-    if (result.success) {
-      setHistoryErrors([]);
-      setHistoryLoaded(false);
-      setHealth(null);
-      setTimeline([]);
-      setTimelineLoaded(false);
-      setDeleteSuccess(true);
-      setTimeout(() => setDeleteSuccess(false), 3e3);
+    const deleted = result.deleted || 0;
+    const { total } = result;
+    let msg;
+    if (!result.success && total === void 0) {
+      msg = { ok: false, text: `Delete failed: ${result.error || "unknown error"}` };
+    } else if (total !== void 0 && deleted < total) {
+      msg = { ok: false, text: `Deleted ${deleted} of ${total}. ${total - deleted} failed${result.error ? `: ${result.error}` : ""}` };
+    } else {
+      msg = { ok: true, text: `Deleted ${deleted} saved error${deleted !== 1 ? "s" : ""}.` };
     }
+    setDeleteMsg(msg);
+    setTimeout(() => setDeleteMsg((m) => m === msg ? null : m), msg.ok ? 3e3 : 1e4);
+    setExpandedHistory(null);
+    setHealth(null);
+    setTimeline([]);
+    setTimelineLoaded(false);
+    setTimelineError(null);
+    loadHistory();
   }
   function toggleStack(key) {
     setExpandedStacks((prev) => {
@@ -472,7 +557,7 @@ function BlackBoxPanel() {
     });
   }
   function toggleFilter(type) {
-    setActiveFilters((prev) => {
+    setHiddenTypes((prev) => {
       const next = new Set(prev);
       if (next.has(type)) next.delete(type);
       else next.add(type);
@@ -496,35 +581,42 @@ function BlackBoxPanel() {
     return Promise.resolve(fallbackCopy(text));
   }
   function fallbackCopy(text) {
+    let ta;
     try {
-      const ta = document.createElement("textarea");
+      ta = document.createElement("textarea");
       ta.value = text;
       ta.style.cssText = "position:fixed;left:-9999px";
       document.body.appendChild(ta);
       ta.select();
-      document.execCommand("copy");
-      document.body.removeChild(ta);
-      return true;
+      return document.execCommand("copy") === true;
     } catch (e) {
       return false;
+    } finally {
+      ta == null ? void 0 : ta.remove();
     }
   }
   async function copyAsJSON(err, key) {
-    const ok = await copyToClipboard(errorToJSON(err));
+    const text = errorToJSON(err);
+    const ok = await copyToClipboard(text);
     if (ok) {
       setCopiedErrorKey(key + ":json");
       setTimeout(() => setCopiedErrorKey(null), 1500);
+    } else {
+      setReportText(text);
     }
   }
   async function copyAsMarkdown(err, key) {
-    const ok = await copyToClipboard(errorToMarkdown(err));
+    const text = errorToMarkdown(err);
+    const ok = await copyToClipboard(text);
     if (ok) {
       setCopiedErrorKey(key + ":md");
       setTimeout(() => setCopiedErrorKey(null), 1500);
+    } else {
+      setReportText(text);
     }
   }
   const hasSilences = silences.length > 0;
-  const uniqueKeys = new Set(errors.map((e) => `${e.source}:${(e.message || "").slice(0, 80)}`));
+  const uniqueKeys = new Set(errors.filter((e) => !isInternal(e)).map((e) => `${e.source}:${(e.message || "").slice(0, 80)}`));
   const uniqueCount = uniqueKeys.size;
   let badgeBg = "#22c55e";
   if (uniqueCount >= 6) badgeBg = "#ef4444";
@@ -532,25 +624,30 @@ function BlackBoxPanel() {
   const badgeText = uniqueCount > 99 ? "99+" : String(uniqueCount);
   const idle = uniqueCount === 0;
   useEffect(() => {
-    if (uniqueCount > prevUniqueCountRef.current) {
-      setPulseKey((k) => k + 1);
-    }
+    if (isOpen) setPulseKey(0);
+    else if (uniqueCount > prevUniqueCountRef.current) setPulseKey((k) => k + 1);
     prevUniqueCountRef.current = uniqueCount;
-  }, [uniqueCount]);
+  }, [uniqueCount, isOpen]);
+  if (!ready) return null;
   if (!isOpen) {
     const size = idle ? 8 : 22;
     const borderRadius = idle ? "50%" : "3px";
+    const launcherLabel = idle ? "BlackBox: no errors" : `BlackBox: ${badgeText} error${uniqueCount === 1 ? "" : "s"} \u2014 click to open`;
     return /* @__PURE__ */ jsxs(
-      "div",
+      "button",
       {
+        type: "button",
         "data-bb-panel": true,
         onClick: () => setIsOpen(true),
-        title: idle ? "BlackBox: no errors" : `BlackBox: ${badgeText} error${uniqueCount === 1 ? "" : "s"} \u2014 click to open`,
-        style: {
+        onPointerDown: isolateFromHost,
+        title: launcherLabel,
+        "aria-label": launcherLabel,
+        style: __spreadProps(__spreadValues({}, btnReset), {
           position: "fixed",
           bottom: 0,
           left: 0,
           zIndex: 99999,
+          pointerEvents: "auto",
           width: `${size}px`,
           height: `${size}px`,
           borderRadius,
@@ -566,11 +663,11 @@ function BlackBoxPanel() {
           lineHeight: 1,
           transition: "width 180ms ease, height 180ms ease, border-radius 180ms ease",
           WebkitTapHighlightColor: "transparent"
-        },
+        }),
         children: [
           !idle && /* @__PURE__ */ jsx("span", { style: { fontSize: uniqueCount > 99 ? "9px" : "12px", fontWeight: "bold" }, children: badgeText }),
           pulseKey > 0 && !idle && /* @__PURE__ */ jsx(
-            "div",
+            "span",
             {
               style: {
                 position: "absolute",
@@ -584,7 +681,7 @@ function BlackBoxPanel() {
             },
             pulseKey
           ),
-          hasSilences && !idle && /* @__PURE__ */ jsx("div", { style: { position: "absolute", top: "-3px", right: "-3px", width: "7px", height: "7px", borderRadius: "50%", background: "#facc15", border: "1px solid white" } })
+          hasSilences && !idle && /* @__PURE__ */ jsx("span", { style: { position: "absolute", top: "-3px", right: "-3px", width: "7px", height: "7px", borderRadius: "50%", background: "#facc15", border: "1px solid white" } })
         ]
       }
     );
@@ -597,6 +694,7 @@ function BlackBoxPanel() {
     bottom: "16px",
     left: "16px",
     zIndex: 99999,
+    pointerEvents: "auto",
     maxWidth: "none",
     maxHeight: "none",
     background: "rgba(26, 26, 46, 0.97)",
@@ -613,6 +711,7 @@ function BlackBoxPanel() {
     bottom: "16px",
     right: "8px",
     zIndex: 99999,
+    pointerEvents: "auto",
     width: panelWidth,
     maxWidth: "400px",
     maxHeight: "min(520px, calc(100vh - 32px))",
@@ -630,9 +729,31 @@ function BlackBoxPanel() {
     const stackKey = keyPrefix;
     const stackVisible = expandedStacks.has(stackKey);
     const allBreadcrumbs = err.breadcrumbs || [];
-    const filteredBreadcrumbs = allBreadcrumbs.filter((bc) => activeFilters.has(bc.type) || !BREADCRUMB_FILTER_TYPES.includes(bc.type));
+    const breadcrumbTypes = [...new Set(allBreadcrumbs.map((bc) => bc.type).filter(Boolean))].sort();
+    const filteredBreadcrumbs = allBreadcrumbs.filter((bc) => !hiddenTypes.has(bc.type));
     const last5 = filteredBreadcrumbs.slice(-5);
+    const ctx = err.context || {};
+    const actionUrl = typeof ctx.action_url === "string" && ctx.action_url.startsWith("https://") ? ctx.action_url : null;
+    const ctxEntries = Object.entries(ctx).filter(([k, v]) => !k.startsWith("_") && k !== "action_hint" && k !== "action_url" && v !== void 0 && v !== null).map(([k, v]) => {
+      let s;
+      try {
+        s = typeof v === "string" ? v : JSON.stringify(v);
+      } catch (e) {
+      }
+      if (typeof s !== "string") s = String(v);
+      return [k, s.length > 400 ? s.slice(0, 400) + "\u2026" : s];
+    });
+    const ctxKey = keyPrefix + ":ctx";
+    const ctxVisible = expandedStacks.has(ctxKey);
     return /* @__PURE__ */ jsxs("div", { style: { padding: "6px 14px 10px 24px", background: "rgba(0,0,0,0.2)", borderBottom: "1px solid rgba(255,255,255,0.05)" }, children: [
+      err.message && /* @__PURE__ */ jsx("div", { style: { fontSize: "11px", color: "#ddd", whiteSpace: "pre-wrap", wordBreak: "break-word", userSelect: "text", marginBottom: "6px" }, children: err.message }),
+      (ctx.action_hint || actionUrl) && /* @__PURE__ */ jsxs("div", { style: { fontSize: "11px", color: "#facc15", background: "rgba(250,204,21,0.08)", borderRadius: "4px", padding: "4px 6px", marginBottom: "6px", wordBreak: "break-word" }, children: [
+        ctx.action_hint,
+        actionUrl && /* @__PURE__ */ jsxs(Fragment, { children: [
+          ctx.action_hint ? " " : "",
+          /* @__PURE__ */ jsx("a", { href: actionUrl, target: "_blank", rel: "noopener noreferrer", onClick: (e) => e.stopPropagation(), style: { color: "#a5b4fc", fontWeight: 600 }, children: "Open \u2197" })
+        ] })
+      ] }),
       /* @__PURE__ */ jsxs("div", { style: { display: "flex", gap: "6px", marginBottom: "6px" }, children: [
         /* @__PURE__ */ jsx("button", { onClick: (e) => {
           e.stopPropagation();
@@ -645,13 +766,15 @@ function BlackBoxPanel() {
       ] }),
       err.stack && /* @__PURE__ */ jsxs("div", { style: { marginBottom: "6px" }, children: [
         /* @__PURE__ */ jsxs(
-          "div",
+          "button",
           {
+            type: "button",
+            "aria-expanded": stackVisible,
             onClick: (e) => {
               e.stopPropagation();
               toggleStack(stackKey);
             },
-            style: { cursor: "pointer", fontSize: "11px", color: "#a5b4fc", userSelect: "none", display: "flex", alignItems: "center", gap: "4px" },
+            style: __spreadProps(__spreadValues({}, btnReset), { cursor: "pointer", fontSize: "11px", color: "#a5b4fc", userSelect: "none", display: "flex", alignItems: "center", gap: "4px" }),
             children: [
               /* @__PURE__ */ jsx("span", { children: stackVisible ? "\u25BC" : "\u25B6" }),
               /* @__PURE__ */ jsx("span", { children: "Stack" })
@@ -671,15 +794,45 @@ function BlackBoxPanel() {
           wordBreak: "break-all"
         }, children: err.stack })
       ] }),
-      allBreadcrumbs.length > 0 && /* @__PURE__ */ jsxs(Fragment, { children: [
-        /* @__PURE__ */ jsx("div", { style: { display: "flex", gap: "4px", flexWrap: "wrap", marginBottom: "6px" }, children: BREADCRUMB_FILTER_TYPES.map((type) => /* @__PURE__ */ jsx(
+      ctxEntries.length > 0 && /* @__PURE__ */ jsxs("div", { style: { marginBottom: "6px" }, children: [
+        /* @__PURE__ */ jsxs(
           "button",
           {
+            type: "button",
+            "aria-expanded": ctxVisible,
+            onClick: (e) => {
+              e.stopPropagation();
+              toggleStack(ctxKey);
+            },
+            style: __spreadProps(__spreadValues({}, btnReset), { cursor: "pointer", fontSize: "11px", color: "#a5b4fc", userSelect: "none", display: "flex", alignItems: "center", gap: "4px" }),
+            children: [
+              /* @__PURE__ */ jsx("span", { children: ctxVisible ? "\u25BC" : "\u25B6" }),
+              /* @__PURE__ */ jsxs("span", { children: [
+                "Context (",
+                ctxEntries.length,
+                ")"
+              ] })
+            ]
+          }
+        ),
+        ctxVisible && /* @__PURE__ */ jsx("div", { style: { fontSize: "10px", background: "rgba(0,0,0,0.4)", borderRadius: "6px", padding: "6px 8px", marginTop: "4px", userSelect: "text" }, children: ctxEntries.map(([k, s]) => /* @__PURE__ */ jsxs("div", { style: { display: "flex", gap: "6px", padding: "1px 0" }, children: [
+          /* @__PURE__ */ jsxs("span", { style: { color: "#888", flexShrink: 0 }, children: [
+            k,
+            ":"
+          ] }),
+          /* @__PURE__ */ jsx("span", { style: { color: "#bbb", whiteSpace: "pre-wrap", wordBreak: "break-all" }, children: s })
+        ] }, k)) })
+      ] }),
+      allBreadcrumbs.length > 0 && /* @__PURE__ */ jsxs(Fragment, { children: [
+        /* @__PURE__ */ jsx("div", { style: { display: "flex", gap: "4px", flexWrap: "wrap", marginBottom: "6px" }, children: breadcrumbTypes.map((type) => /* @__PURE__ */ jsx(
+          "button",
+          {
+            "aria-pressed": !hiddenTypes.has(type),
             onClick: (e) => {
               e.stopPropagation();
               toggleFilter(type);
             },
-            style: filterChipStyle(activeFilters.has(type)),
+            style: filterChipStyle(!hiddenTypes.has(type)),
             children: bcTypeLabel(type)
           },
           type
@@ -698,30 +851,37 @@ function BlackBoxPanel() {
   }
   function passesInternalFilter(err) {
     if (showInternal) return true;
-    return !(err.internal === true || err._internal === true);
+    return !isInternal(err);
   }
   const filteredLiveErrors = [...errors].reverse().filter(matchesSearch).filter(passesInternalFilter);
   const filteredHistoryErrors = historyErrors.filter(matchesSearch).filter(passesInternalFilter);
-  const hiddenInternalCount = [...errors].filter((e) => e.internal === true || e._internal === true).length + historyErrors.filter((e) => e.internal === true).length;
+  const internalCount = tab === "live" ? errors.filter(isInternal).length : tab === "history" ? historyErrors.filter(isInternal).length : 0;
+  function emptyListText(total, noneText) {
+    if (total === 0) return noneText;
+    return searchQuery.trim() ? "No matching errors" : "Only framework-internal errors (hidden)";
+  }
   return /* @__PURE__ */ jsxs(Fragment, { children: [
     isExpanded && /* @__PURE__ */ jsx("div", { style: {
       position: "fixed",
       inset: 0,
       zIndex: 99998,
+      pointerEvents: "auto",
       background: "rgba(0, 0, 0, 0.5)"
-    }, onClick: () => setIsExpanded(false) }),
-    /* @__PURE__ */ jsxs("div", { "data-bb-panel": true, style: panelStyle, children: [
+    }, onClick: () => setIsExpanded(false), onPointerDown: isolateFromHost }),
+    /* @__PURE__ */ jsxs("div", { "data-bb-panel": true, role: "dialog", "aria-label": "BlackBox error inspector", style: panelStyle, onPointerDown: isolateFromHost, onWheel: isolateFromHost, onTouchMove: isolateFromHost, children: [
       /* @__PURE__ */ jsx("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: "1px solid rgba(255,255,255,0.1)", flexShrink: 0, gap: "8px" }, children: searchOpen ? /* @__PURE__ */ jsxs("div", { style: { flex: 1, display: "flex", alignItems: "center", gap: "6px" }, children: [
         /* @__PURE__ */ jsx(
           "input",
           {
-            ref: (el) => el && el.focus(),
+            autoFocus: true,
             type: "text",
             placeholder: "Search errors...",
             value: searchQuery,
             onChange: (e) => setSearchQuery(e.target.value),
+            "aria-label": "Search errors",
             onKeyDown: (e) => {
               if (e.key === "Escape") {
+                e.stopPropagation();
                 setSearchOpen(false);
                 setSearchQuery("");
               }
@@ -729,21 +889,21 @@ function BlackBoxPanel() {
             style: __spreadProps(__spreadValues({}, searchInputStyle), { margin: 0 })
           }
         ),
-        /* @__PURE__ */ jsx("span", { onClick: () => {
+        /* @__PURE__ */ jsx("button", { type: "button", "aria-label": "Close search", onClick: () => {
           setSearchOpen(false);
           setSearchQuery("");
-        }, style: { cursor: "pointer", fontSize: "14px", color: "#999", padding: "4px", flexShrink: 0 }, children: "\u2715" })
+        }, style: __spreadProps(__spreadValues({}, btnReset), { cursor: "pointer", fontSize: "14px", color: "#999", padding: "4px", flexShrink: 0 }), children: "\u2715" })
       ] }) : /* @__PURE__ */ jsxs(Fragment, { children: [
         /* @__PURE__ */ jsx("span", { style: { fontWeight: "bold", fontSize: "13px", color: "white" }, children: "BlackBox" }),
         /* @__PURE__ */ jsx("span", { style: { fontSize: "10px", color: "#666" }, children: isConnected ? "DB connected" : "Local only" }),
         /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", gap: "2px" }, children: [
-          /* @__PURE__ */ jsx("span", { onClick: () => setSearchOpen(true), title: "Search errors", style: { cursor: "pointer", fontSize: "13px", color: "#999", padding: "4px 8px", borderRadius: "4px", transition: "color 0.15s" }, children: "\u{1F50D}" }),
-          /* @__PURE__ */ jsx("span", { onClick: copyFullReport, title: "Copy full diagnostic report as JSON", style: { cursor: "pointer", fontSize: "13px", color: reportCopied ? "#22c55e" : reportEmpty ? "#f59e0b" : "#999", padding: "4px 8px", borderRadius: "4px", transition: "color 0.15s" }, children: reportCopied ? "\u2713" : reportEmpty ? "\u2205" : "\u{1F4CB}" }),
-          /* @__PURE__ */ jsx("span", { onClick: () => setIsExpanded((prev) => !prev), style: { cursor: "pointer", fontSize: "16px", color: "#999", padding: "4px 8px", borderRadius: "4px" }, children: isExpanded ? "\u2921" : "\u2922" }),
-          /* @__PURE__ */ jsx("span", { onClick: () => {
+          /* @__PURE__ */ jsx("button", { type: "button", onClick: () => setSearchOpen(true), title: "Search errors", "aria-label": "Search errors", style: __spreadProps(__spreadValues({}, btnReset), { cursor: "pointer", fontSize: "13px", color: "#999", padding: "4px 8px", borderRadius: "4px", transition: "color 0.15s" }), children: "\u{1F50D}" }),
+          /* @__PURE__ */ jsx("button", { type: "button", onClick: copyFullReport, title: "Copy full diagnostic report as JSON", "aria-label": "Copy diagnostic report", style: __spreadProps(__spreadValues({}, btnReset), { cursor: "pointer", fontSize: "13px", color: reportCopied ? "#22c55e" : reportEmpty ? "#f59e0b" : "#999", padding: "4px 8px", borderRadius: "4px", transition: "color 0.15s" }), children: reportCopied ? "\u2713" : reportEmpty ? "\u2205" : "\u{1F4CB}" }),
+          /* @__PURE__ */ jsx("button", { type: "button", onClick: () => setIsExpanded((prev) => !prev), title: isExpanded ? "Collapse panel" : "Expand panel", "aria-label": isExpanded ? "Collapse panel" : "Expand panel", style: __spreadProps(__spreadValues({}, btnReset), { cursor: "pointer", fontSize: "16px", color: "#999", padding: "4px 8px", borderRadius: "4px" }), children: isExpanded ? "\u2921" : "\u2922" }),
+          /* @__PURE__ */ jsx("button", { type: "button", onClick: () => {
             setIsOpen(false);
             setIsExpanded(false);
-          }, style: { cursor: "pointer", fontSize: "16px", color: "#999", padding: "4px 8px", marginRight: "-8px", borderRadius: "4px" }, children: "\u2715" })
+          }, title: "Close", "aria-label": "Close BlackBox panel", style: __spreadProps(__spreadValues({}, btnReset), { cursor: "pointer", fontSize: "16px", color: "#999", padding: "4px 8px", marginRight: "-8px", borderRadius: "4px" }), children: "\u2715" })
         ] })
       ] }) }),
       /* @__PURE__ */ jsx("div", { style: { display: "flex", borderBottom: "1px solid rgba(255,255,255,0.1)", flexShrink: 0, padding: "0 6px" }, children: ["live", "history", "health"].map((t) => /* @__PURE__ */ jsx(
@@ -761,30 +921,35 @@ function BlackBoxPanel() {
         },
         t
       )) }),
-      hiddenInternalCount > 0 && (tab === "live" || tab === "history") && /* @__PURE__ */ jsxs("div", { style: { padding: "4px 14px", fontSize: "10px", color: "#888", display: "flex", alignItems: "center", gap: "8px", borderBottom: "1px solid rgba(255,255,255,0.05)" }, children: [
+      internalCount > 0 && /* @__PURE__ */ jsxs("div", { style: { padding: "4px 14px", fontSize: "10px", color: "#888", display: "flex", alignItems: "center", gap: "8px", borderBottom: "1px solid rgba(255,255,255,0.05)" }, children: [
         /* @__PURE__ */ jsxs("span", { children: [
-          hiddenInternalCount,
+          internalCount,
           " framework-internal error",
-          hiddenInternalCount !== 1 ? "s" : "",
-          " hidden"
+          internalCount !== 1 ? "s" : "",
+          " ",
+          showInternal ? "shown" : "hidden"
         ] }),
         /* @__PURE__ */ jsx("button", { onClick: () => setShowInternal((s) => !s), style: filterChipStyle(showInternal), children: showInternal ? "Hide" : "Show" })
       ] }),
       /* @__PURE__ */ jsxs("div", { style: { flex: 1, overflowY: "auto", minHeight: 0 }, children: [
         tab === "live" && /* @__PURE__ */ jsxs("div", { children: [
-          filteredLiveErrors.length === 0 ? /* @__PURE__ */ jsx("div", { style: { padding: "24px 14px", textAlign: "center", color: "#22c55e" }, children: errors.length === 0 ? "No errors captured" : "No matching errors" }) : filteredLiveErrors.map((err, i) => {
-            var _a, _b;
-            const errKey = `${err._fingerprint || "fp"}:${((_a = err.metadata) == null ? void 0 : _a.timestamp) || ""}:${i}`;
+          filteredLiveErrors.length === 0 ? /* @__PURE__ */ jsx("div", { style: { padding: "24px 14px", textAlign: "center", color: "#22c55e" }, children: emptyListText(errors.length, "No errors captured") }) : filteredLiveErrors.map((err) => {
+            var _a;
+            const errKey = liveErrorKey(err);
             const isExp = expandedError === errKey;
             return /* @__PURE__ */ jsxs("div", { children: [
-              /* @__PURE__ */ jsxs("div", { onClick: () => setExpandedError(isExp ? null : errKey), style: { padding: "8px 14px", cursor: "pointer", borderBottom: "1px solid rgba(255,255,255,0.05)", background: isExp ? "rgba(255,255,255,0.05)" : "transparent" }, children: [
+              /* @__PURE__ */ jsxs("button", { type: "button", "aria-expanded": isExp, onClick: () => setExpandedError(isExp ? null : errKey), style: __spreadProps(__spreadValues({}, rowBtnStyle), { padding: "8px 14px", cursor: "pointer", borderBottom: "1px solid rgba(255,255,255,0.05)", background: isExp ? "rgba(255,255,255,0.05)" : "transparent" }), children: [
                 /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }, children: [
                   /* @__PURE__ */ jsx("span", { style: { fontSize: "10px", padding: "1px 6px", borderRadius: "3px", background: sourceColor(err.source), color: "white", fontWeight: "bold", textTransform: "uppercase", flexShrink: 0 }, children: err.source || "error" }),
-                  /* @__PURE__ */ jsx("span", { style: { fontSize: "10px", opacity: 0.4, marginLeft: "auto", flexShrink: 0 }, children: timeAgo((_b = err.metadata) == null ? void 0 : _b.timestamp) })
+                  err._stormCount > 1 && /* @__PURE__ */ jsxs("span", { title: "Repeated in a rapid-fire storm", style: { fontSize: "10px", padding: "1px 5px", borderRadius: "3px", background: "rgba(255,255,255,0.15)", color: "#ccc", flexShrink: 0 }, children: [
+                    "x",
+                    err._stormCount
+                  ] }),
+                  /* @__PURE__ */ jsx("span", { style: { fontSize: "10px", opacity: 0.4, marginLeft: "auto", flexShrink: 0 }, children: timeAgo((_a = err.metadata) == null ? void 0 : _a.timestamp) })
                 ] }),
-                /* @__PURE__ */ jsx("div", { style: { color: "#ccc", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: (err.message || "").slice(0, 80) })
+                /* @__PURE__ */ jsx("div", { title: err.message, style: { color: "#ccc", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: (err.message || "").slice(0, 80) })
               ] }),
-              isExp && renderErrorDetail(err, `live-${i}`)
+              isExp && renderErrorDetail(err, errKey)
             ] }, errKey);
           }),
           hasSilences && /* @__PURE__ */ jsxs("div", { style: { borderTop: "1px solid rgba(255,255,255,0.1)", padding: "8px 14px" }, children: [
@@ -830,8 +995,9 @@ function BlackBoxPanel() {
               }
             )
           ] }),
-          deleteSuccess && /* @__PURE__ */ jsx("div", { style: { padding: "8px 14px", textAlign: "center", color: "#22c55e", fontSize: "11px", background: "rgba(34,197,94,0.1)" }, children: "All saved errors deleted successfully." }),
-          filteredHistoryErrors.length === 0 && !timelineLoaded && timeline.length === 0 ? /* @__PURE__ */ jsx("div", { style: { padding: "24px 14px", textAlign: "center", color: "#22c55e" }, children: historyErrors.length === 0 ? "No saved errors" : "No matching errors" }) : /* @__PURE__ */ jsxs(Fragment, { children: [
+          deleteMsg && /* @__PURE__ */ jsx("div", { style: { padding: "8px 14px", textAlign: "center", color: deleteMsg.ok ? "#22c55e" : "#fca5a5", fontSize: "11px", background: deleteMsg.ok ? "rgba(34,197,94,0.1)" : "rgba(239,68,68,0.1)", wordBreak: "break-word", userSelect: "text" }, children: deleteMsg.text }),
+          historyError && /* @__PURE__ */ jsx("div", { style: { padding: "8px 14px" }, children: renderQueryError(historyError) }),
+          filteredHistoryErrors.length === 0 && !timelineLoaded && timeline.length === 0 ? !historyError && /* @__PURE__ */ jsx("div", { style: { padding: "24px 14px", textAlign: "center", color: "#22c55e" }, children: emptyListText(historyErrors.length, "No saved errors") }) : /* @__PURE__ */ jsxs(Fragment, { children: [
             filteredHistoryErrors.length > 0 && /* @__PURE__ */ jsxs(Fragment, { children: [
               /* @__PURE__ */ jsxs("div", { style: sectionTitle, children: [
                 "Saved Errors (",
@@ -839,9 +1005,10 @@ function BlackBoxPanel() {
                 ")"
               ] }),
               filteredHistoryErrors.map((err, i) => {
-                const isExp = expandedHistory === i;
+                const hKey = `history-${err.id || i}`;
+                const isExp = expandedHistory === hKey;
                 return /* @__PURE__ */ jsxs("div", { children: [
-                  /* @__PURE__ */ jsxs("div", { onClick: () => setExpandedHistory(isExp ? null : i), style: { padding: "8px 14px", cursor: "pointer", borderBottom: "1px solid rgba(255,255,255,0.05)", background: isExp ? "rgba(255,255,255,0.05)" : "transparent" }, children: [
+                  /* @__PURE__ */ jsxs("button", { type: "button", "aria-expanded": isExp, onClick: () => setExpandedHistory(isExp ? null : hKey), style: __spreadProps(__spreadValues({}, rowBtnStyle), { padding: "8px 14px", cursor: "pointer", borderBottom: "1px solid rgba(255,255,255,0.05)", background: isExp ? "rgba(255,255,255,0.05)" : "transparent" }), children: [
                     /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }, children: [
                       /* @__PURE__ */ jsx("span", { style: { fontSize: "10px", padding: "1px 6px", borderRadius: "3px", background: sourceColor(err.source), color: "white", fontWeight: "bold", textTransform: "uppercase", flexShrink: 0 }, children: err.source || "error" }),
                       (err.occurrences || 1) > 1 && /* @__PURE__ */ jsxs("span", { style: { fontSize: "10px", padding: "1px 5px", borderRadius: "3px", background: "rgba(255,255,255,0.15)", color: "#ccc", flexShrink: 0 }, children: [
@@ -850,10 +1017,10 @@ function BlackBoxPanel() {
                       ] }),
                       /* @__PURE__ */ jsx("span", { style: { fontSize: "10px", opacity: 0.4, marginLeft: "auto", flexShrink: 0 }, children: timeAgo(err.lastSeen) })
                     ] }),
-                    /* @__PURE__ */ jsx("div", { style: { color: "#ccc", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: (err.message || "").slice(0, 80) })
+                    /* @__PURE__ */ jsx("div", { title: err.message, style: { color: "#ccc", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: (err.message || "").slice(0, 80) })
                   ] }),
-                  isExp && renderErrorDetail(err, `history-${i}`)
-                ] }, i);
+                  isExp && renderErrorDetail(err, hKey)
+                ] }, hKey);
               })
             ] }),
             timeline.length > 0 && /* @__PURE__ */ jsxs(Fragment, { children: [
@@ -870,17 +1037,20 @@ function BlackBoxPanel() {
                 /* @__PURE__ */ jsx("span", { style: { color: "#aaa", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, children: bcSummary(ev) })
               ] }, i))
             ] }),
-            timelineLoaded && timeline.length === 0 && /* @__PURE__ */ jsxs("div", { style: { padding: "12px 14px", textAlign: "center", color: "#888", fontSize: "11px" }, children: [
+            timelineLoaded && timeline.length === 0 && (timelineError ? /* @__PURE__ */ jsx("div", { style: { padding: "8px 14px" }, children: renderQueryError(timelineError) }) : /* @__PURE__ */ jsxs("div", { style: { padding: "12px 14px", textAlign: "center", color: "#888", fontSize: "11px" }, children: [
               "No activity recorded in the last ",
-              timelineMinutes,
+              timelineLoadedMinutes,
               " minutes."
-            ] })
+            ] }))
           ] })
         ] }) }),
         tab === "health" && /* @__PURE__ */ jsx("div", { style: { padding: "12px 14px" }, children: !isConnected ? /* @__PURE__ */ jsxs("div", { style: { textAlign: "center", color: "#888", padding: "12px 0" }, children: [
           /* @__PURE__ */ jsx("div", { style: { marginBottom: "8px" }, children: "No database connected" }),
           /* @__PURE__ */ jsx("div", { style: { fontSize: "11px", color: "#666" }, children: "Health data requires a database connection. Errors are still tracked locally." })
-        ] }) : healthLoading ? /* @__PURE__ */ jsx("div", { style: { textAlign: "center", color: "#888", padding: "24px 0" }, children: "Loading..." }) : !health ? /* @__PURE__ */ jsx("div", { style: { textAlign: "center", padding: "24px 0" }, children: /* @__PURE__ */ jsx("button", { onClick: loadHealth, style: loadBtn, children: "Check Health" }) }) : /* @__PURE__ */ jsxs(Fragment, { children: [
+        ] }) : healthLoading ? /* @__PURE__ */ jsx("div", { style: { textAlign: "center", color: "#888", padding: "24px 0" }, children: "Loading..." }) : !health ? /* @__PURE__ */ jsx("div", { style: { textAlign: "center", padding: "24px 0" }, children: /* @__PURE__ */ jsx("button", { onClick: loadHealth, style: loadBtn, children: "Check Health" }) }) : queryErrorOf(health) ? /* @__PURE__ */ jsxs(Fragment, { children: [
+          renderQueryError(queryErrorOf(health)),
+          /* @__PURE__ */ jsx("div", { style: { textAlign: "center", marginTop: "12px" }, children: /* @__PURE__ */ jsx("button", { onClick: loadHealth, style: __spreadProps(__spreadValues({}, loadBtn), { padding: "4px 12px", fontSize: "11px" }), children: "Refresh" }) })
+        ] }) : /* @__PURE__ */ jsxs(Fragment, { children: [
           /* @__PURE__ */ jsxs("div", { style: { textAlign: "center", padding: "16px 0", marginBottom: "12px", borderRadius: "8px", background: "rgba(255,255,255,0.03)" }, children: [
             /* @__PURE__ */ jsx("div", { style: { fontSize: "24px", fontWeight: "bold", color: verdictColor(health.verdict) }, children: health.verdict }),
             /* @__PURE__ */ jsx("div", { style: { fontSize: "11px", color: "#888", marginTop: "4px" }, children: "Last 24 hours" })
@@ -896,7 +1066,7 @@ function BlackBoxPanel() {
             ] }),
             /* @__PURE__ */ jsxs("div", { style: statBox(), children: [
               /* @__PURE__ */ jsx("div", { style: { fontSize: "20px", fontWeight: "bold", color: "#ccc" }, children: health.systemicCount }),
-              /* @__PURE__ */ jsx("div", { style: { fontSize: "10px", color: "#888" }, children: "Repeated 10+" })
+              /* @__PURE__ */ jsx("div", { style: { fontSize: "10px", color: "#888" }, children: "Repeated 11+" })
             ] })
           ] }),
           health.bySource && Object.keys(health.bySource).length > 0 && /* @__PURE__ */ jsxs(Fragment, { children: [
@@ -923,10 +1093,10 @@ function BlackBoxPanel() {
         ] }) })
       ] }),
       /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 14px", borderTop: "1px solid rgba(255,255,255,0.1)", flexShrink: 0 }, children: [
-        /* @__PURE__ */ jsx("span", { style: { fontSize: "11px", opacity: 0.6 }, children: tab === "live" ? `${uniqueCount} error${uniqueCount !== 1 ? "s" : ""} this session` : tab === "history" ? `${historyErrors.length} saved` : health ? health.verdict : "Health" }),
+        /* @__PURE__ */ jsx("span", { style: { fontSize: "11px", opacity: 0.6 }, children: tab === "live" ? `${uniqueCount} unique${errorCount > uniqueCount ? ` \xB7 ${errorCount} total` : ` error${uniqueCount !== 1 ? "s" : ""}`} this session` : tab === "history" ? `${filteredHistoryErrors.length} saved` : (health == null ? void 0 : health.verdict) || "Health" }),
         /* @__PURE__ */ jsxs("div", { style: { display: "flex", gap: "6px", alignItems: "center" }, children: [
-          tab === "live" && (clearSessionFeedback ? /* @__PURE__ */ jsx("span", { style: { fontSize: "11px", color: "#22c55e", padding: "2px 8px" }, children: "Cleared!" }) : /* @__PURE__ */ jsx("span", { onClick: handleClearSession, style: { cursor: "pointer", fontSize: "11px", color: "#999", padding: "2px 8px", borderRadius: "3px", border: "1px solid rgba(255,255,255,0.15)" }, children: "Clear Session" })),
-          tab === "history" && isConnected && /* @__PURE__ */ jsx("span", { onClick: () => setShowClearConfirm(true), style: { cursor: "pointer", fontSize: "11px", color: "#ef4444", padding: "2px 8px", borderRadius: "3px", border: "1px solid rgba(239,68,68,0.3)" }, children: "Delete All" })
+          tab === "live" && (clearSessionFeedback ? /* @__PURE__ */ jsx("span", { style: { fontSize: "11px", color: "#22c55e", padding: "2px 8px" }, children: "Cleared!" }) : /* @__PURE__ */ jsx("button", { type: "button", onClick: handleClearSession, style: __spreadProps(__spreadValues({}, btnReset), { cursor: "pointer", fontSize: "11px", color: "#999", padding: "2px 8px", borderRadius: "3px", border: "1px solid rgba(255,255,255,0.15)" }), children: "Clear Session" })),
+          tab === "history" && isConnected && /* @__PURE__ */ jsx("button", { type: "button", onClick: () => setShowClearConfirm(true), style: __spreadProps(__spreadValues({}, btnReset), { cursor: "pointer", fontSize: "11px", color: "#ef4444", padding: "2px 8px", borderRadius: "3px", border: "1px solid rgba(239,68,68,0.3)" }), children: "Delete All" })
         ] })
       ] }),
       showClearConfirm && /* @__PURE__ */ jsxs("div", { style: { position: "absolute", inset: 0, background: "rgba(0,0,0,0.85)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", borderRadius: "12px", padding: "24px", gap: "16px" }, children: [
@@ -940,7 +1110,7 @@ function BlackBoxPanel() {
       reportText && /* @__PURE__ */ jsxs("div", { style: { position: "absolute", inset: 0, background: "rgba(0,0,0,0.95)", display: "flex", flexDirection: "column", borderRadius: "12px", padding: "12px", gap: "8px", zIndex: 10 }, children: [
         /* @__PURE__ */ jsxs("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" }, children: [
           /* @__PURE__ */ jsx("span", { style: { fontSize: "12px", color: "#ccc", fontWeight: "bold" }, children: "Select All + Copy (Ctrl+A, Ctrl+C)" }),
-          /* @__PURE__ */ jsx("span", { onClick: () => setReportText(null), style: { cursor: "pointer", color: "#999", fontSize: "16px", padding: "2px 6px" }, children: "\u2715" })
+          /* @__PURE__ */ jsx("button", { type: "button", "aria-label": "Close report", onClick: () => setReportText(null), style: __spreadProps(__spreadValues({}, btnReset), { cursor: "pointer", color: "#999", fontSize: "16px", padding: "2px 6px" }), children: "\u2715" })
         ] }),
         /* @__PURE__ */ jsx(
           "textarea",
@@ -974,28 +1144,27 @@ function BlackBoxPanelWrapper() {
 // src/components/BlackBoxProvider.js
 import { Component } from "react";
 import { jsx as jsx2, jsxs as jsxs2 } from "react/jsx-runtime";
-var isProduction = typeof process !== "undefined" && process.env && process.env.NODE_ENV === "production";
 var BlackBoxProvider = class extends Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, dismissed: false };
+    this.state = { hasError: false };
   }
   static getDerivedStateFromError() {
-    return { hasError: true, dismissed: false };
+    return { hasError: true };
   }
   componentDidCatch(error, info) {
-    if (!isProduction) {
-      try {
-        blackbox_default.captureError(error, {
-          source: "react_boundary",
-          componentStack: (info == null ? void 0 : info.componentStack) || ""
-        });
-      } catch (e) {
-      }
+    try {
+      blackbox_default._recordError({
+        message: (error == null ? void 0 : error.message) || String(error),
+        stack: (error == null ? void 0 : error.stack) || "",
+        source: "react_boundary",
+        context: { componentStack: (info == null ? void 0 : info.componentStack) || "" }
+      });
+    } catch (e) {
     }
   }
   render() {
-    if (this.state.hasError && !this.state.dismissed) {
+    if (this.state.hasError) {
       if (this.props.fallback) {
         return this.props.fallback;
       }
@@ -1009,40 +1178,22 @@ var BlackBoxProvider = class extends Component {
         borderRadius: "8px",
         textAlign: "center"
       }, children: [
-        /* @__PURE__ */ jsx2("p", { style: { color: "#333", fontSize: "16px", margin: "0 0 8px 0" }, children: "Something went wrong." }),
-        /* @__PURE__ */ jsx2("p", { style: { color: "#333", fontSize: "14px", margin: "0 0 20px 0" }, children: "The error has been recorded for debugging." }),
-        /* @__PURE__ */ jsxs2("div", { style: { display: "flex", gap: "12px" }, children: [
-          /* @__PURE__ */ jsx2(
-            "button",
-            {
-              onClick: () => this.setState({ hasError: false, dismissed: false }),
-              style: {
-                padding: "8px 20px",
-                border: "1px solid #999",
-                borderRadius: "4px",
-                background: "white",
-                cursor: "pointer",
-                fontSize: "14px"
-              },
-              children: "Try Again"
-            }
-          ),
-          /* @__PURE__ */ jsx2(
-            "button",
-            {
-              onClick: () => this.setState({ dismissed: true }),
-              style: {
-                padding: "8px 20px",
-                border: "1px solid #999",
-                borderRadius: "4px",
-                background: "white",
-                cursor: "pointer",
-                fontSize: "14px"
-              },
-              children: "Dismiss"
-            }
-          )
-        ] })
+        /* @__PURE__ */ jsx2("p", { style: { color: "#333", fontSize: "16px", margin: "0 0 20px 0" }, children: "Something went wrong." }),
+        /* @__PURE__ */ jsx2(
+          "button",
+          {
+            onClick: () => this.setState({ hasError: false }),
+            style: {
+              padding: "8px 20px",
+              border: "1px solid #999",
+              borderRadius: "4px",
+              background: "white",
+              cursor: "pointer",
+              fontSize: "14px"
+            },
+            children: "Try Again"
+          }
+        )
       ] });
     }
     return this.props.children;

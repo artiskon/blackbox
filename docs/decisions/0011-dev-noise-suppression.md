@@ -33,3 +33,4 @@ Two debugging sessions reported pollution from dev-only noise:
 ## Subsequent feedback
 
 - None contradicting. Dev noise reports have stopped.
+- **2026-09-13 (unreleased, after v1.9.5; additive):** another dev-noise source suppressed in the network hook (and `bbR2Fetch`): intentional aborts (AbortController, React StrictMode effect cleanup, query-library cancellation) are recorded as a breadcrumb with `aborted: true` and no error row. `abort(reason)` rejects with the reason itself, so the signal's `aborted` flag is trusted too. Timeouts (`AbortSignal.timeout`, `TimeoutError`) still record as errors.

@@ -34,6 +34,7 @@ export const DEFAULTS = {
   networkExcludePatterns: [
     'firestore.googleapis.com',
     'identitytoolkit.googleapis.com',
+    'securetoken.googleapis.com', // Firebase Auth token refresh
     '__nextjs_original-stack-frames',
     'hot-update',
   ],

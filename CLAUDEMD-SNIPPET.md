@@ -1,5 +1,36 @@
 ## BlackBox v1.9.5 — Dev-Time Error Monitoring
 
+### Changes since v1.9.5 (unreleased)
+
+Bug-fix batch from a full audit. No API removals; a few behavior and field changes an agent reading error data needs to know.
+
+**One-time fingerprint re-keying on upgrade** (old Firestore rows for these stop updating; re-apply any `bb-ack` mutes):
+- Errors with a stack: the top frame is now normalized before hashing (no `:line:col`, no origin/port, chunk hashes from Turbopack/Vite/webpack/Next replaced, minified 1–2 char function names shown as `?`). `groupingInputs.topFrame` is that normalized frame; real line numbers stay in `stack` and `context.callerFrame`.
+- Messages longer than 100 chars (normalized before truncation now, 200-char result), messages with camelCase names or nanoid/`cus_`/`user_`-style IDs in paths, messages ending in an HTTP status like `(401)` (kept, no longer stripped), V8 messages containing `at `, and all Firefox/Safari errors.
+- Firebase errors: messages now name the collection before the colon, doc IDs as `:id`: `Firestore <op> failed on <collection>: ...`, `Firestore <op> failed (sync) on <collection>: ...`, `Firestore listener error on <collection>: ...`. Collection-group queries read ` on **/<collectionId>`.
+- `react_boundary` errors (were labelled `manual`), `resource_load` rows for `next/image` URLs and for empty `src`.
+
+**New / changed fields:**
+- Error `source` can now be `react_boundary` (BlackBoxProvider render crashes, also recorded in production builds when `init({ enabled: true })`).
+- Network errors: `cors_blocked`, `preflight_trigger_method`, `preflight_trigger_headers` and `preflight_reason` are **removed**. Cross-origin network failures instead carry `urlReachability` (`'opaque_response'` = origin reachable, request blocked, CORS likely; `'unreachable_origin'` = DNS/refused/offline; `'unknown'` + `statusHint: 'probe_timed_out_origin_slow_or_hung'` = probe got no answer in 2s) and `statusHint`, plus `preflight_if_cors: { method, headers?, reason? }` only when `opaque_response`. Same-origin failures carry neither. Cross-origin rows land after the probe (a few ms, at most ~2s).
+- Network capture now covers `XMLHttpRequest` too (axios, Firebase Storage SDK). XHR failures with no response read `Network error: METHOD url - XHR error` / `XHR timeout`. `sendBeacon` and WebSocket are still not captured.
+- Intentional aborts (AbortController, effect cleanup) on fetch, XHR and `bbR2Fetch` are breadcrumb-only with `aborted: true`, no error row. Timeouts (`AbortSignal.timeout`) still record.
+- Network breadcrumbs gain `responseType: 'opaque' | 'opaqueredirect'`; successful `no-cors` / `redirect: 'manual'` fetches are no longer `HTTP 0` errors.
+- Non-OK network error rows are recorded after the body preview is read (time-boxed at ~1.5s; reads at most max(`maxErrorBodyLength`, 8 KB)), never delaying the app's response. The breadcrumb is added immediately (no response body on it; the body is on the error row's context), so an app error raised on `!res.ok` still has the failing request in its trail.
+- Request bodies: values of secret-looking keys (password, token, secret, authorization, api key) are `[redacted]`; error-context `requestBody` is same-origin only unless `captureRequestBodies: true`.
+- `resource_load`: `context.upstreamSrc` for `/_next/image` and `/_vercel/image` URLs (hostname and message use the real asset: `Resource failed to load: img - <upstream> (via /_next/image)`); `emptySrc: true` with `urlReachability: 'unknown'`, message `<tag> - (empty src)` and an `action_hint` for elements rendered with `src=""`.
+- `unhandled_promise`: non-Error reasons get `context.reasonType` (`'object'`, `'Response'`, `'string'`, `'undefined'`, `'null'`, ...) plus `context.code` / `context.status` when present; a rejected `Response` reads `HTTP <status> <url>`.
+- Forms: `form_submit` crumbs carry `blocked: true` when native browser validation stopped the submit; `form_validation` errors now fire for native (non-`novalidate`) forms too, on a user submit attempt (submit-button click or Enter); `checkValidity()` / `reportValidity()` calls and programmatic `requestSubmit()` don't record.
+- Click `autoLabel` never uses typed input values or text inside a textarea/contenteditable; icon clicks on `<path>`/`<rect>` with no button/link ancestor record the `<svg>` (tag `svg`, its class). In the copied panel report a click with empty `text` shows its `autoLabel` as `label`.
+- `metadata.buildSha` / `metadata.nodeEnv` are refreshed on every recurrence (most recent occurrence), not frozen at first sighting.
+- Error docs now actually persist `environment`, `tags` and `user`; `context.diagnostics` from `registerDiagnostic` now reaches Firestore (the write waits up to the probe's `timeoutMs`), including on repeats.
+- `lastSeenSessionTag` is written on create AND update: `where('lastSeenSessionTag', '==', tag)` finds both new and re-fired fingerprints in a runner session.
+- `occurrences` counts real hits (atomic with `increment` in `firestoreFns`); a storm adds its suppressed hits in one update when the 5s window ends and `storm.count` is the full storm size. The copied report's errors carry `internal: true` for framework-only errors.
+
+**CLI:** every `bb-*` command supports `--help`, accepts `--flag value` and `--flag=value`, and rejects unknown or malformed flags with exit 1 (bb-clear no longer falls back to its 1-day delete on a typo). `bb:check --new` compares against the last **unfiltered** run. `bb:check` deletes activity docs past `expireAt`. `bb:health` windows on `lastSeen` (recurring errors count; "Total occurrences" is lifetime). `bb:timeline -- --minutes N`, `bb:clear -- --days N`, `--fingerprint` aliases `--fp` / `--id`. Cloud Firestore needs `firebase-admin` + credentials (`gcloud auth application-default login`, `GOOGLE_APPLICATION_CREDENTIALS`, or `serviceAccountKey.json`).
+
+**Panel:** renders nothing until `init()` enabled BB; render it outside `BlackBoxProvider`. Expanded rows show the full message, `action_hint` + clickable `action_url`, and a collapsible "Context (N)" list. Failed Firestore queries show a red "Query failed" block (with a "Create index" link) instead of an empty state. Esc closes the report overlay, then the delete confirm, then the panel. Badge and counts exclude framework-internal errors; Live footer reads `N unique · M total this session` when they differ; storm-collapsed rows show `xN`.
+
 ### What's new in v1.9.5
 
 UX-only release. The popup design is unchanged; only the floating launcher icon was rewritten to be far less intrusive on the host app.
@@ -12,11 +43,11 @@ UX-only release. The popup design is unchanged; only the floating launcher icon 
 Two themes in this release: Firestore-write debugging wins from a v1.9.3 dogfood session, and runner-integration plumbing for the DigitalDen ui-check Playwright runner.
 
 **Runner integration (DigitalDen):**
-- **`window.__BB_SESSION_TAG__` → top-level `sessionTag` on each error doc.** Read once at `init()` (trimmed to 64 chars). The DigitalDen runner sets it via Playwright's `addInitScript` before the page boots; once persisted, the runner can filter `__blackbox` by `sessionTag == <current>` and ignore concurrent activity from real users on the dev VPS, manual operator clicks, or other audit sessions. Update path also writes `lastSeenSessionTag` so a re-fire of a pre-existing fingerprint during the runner's window still surfaces in its query.
+- **`window.__BB_SESSION_TAG__` → top-level `sessionTag` on each error doc.** Read once at `init()` (trimmed to 64 chars). The DigitalDen runner sets it via Playwright's `addInitScript` before the page boots; once persisted, the runner can filter `__blackbox` by `sessionTag == <current>` and ignore concurrent activity from real users on the dev VPS, manual operator clicks, or other audit sessions. Update path also writes `lastSeenSessionTag` so a re-fire of a pre-existing fingerprint during the runner's window still surfaces in its query (since the unreleased changes above, the create path writes it too).
 - **`failFast` mode.** Opt in via `init({ failFast: true })` or `window.__BB_FAIL_FAST__` (set via the same `addInitScript` pattern). On the first non-internal error captured, BB sets `window.__BB_FAIL_FAST_TRIPPED__ = { fingerprint, message, source, recordedAt, sessionTag }` and dispatches a `CustomEvent('blackbox:fail-fast', { detail })` on `window`. The runner watches either signal and halts the route capture early. BB does NOT throw — that would re-enter the capture path via `window.onerror` / `unhandledrejection`. Internal-frame-only errors (framework warnings) never trip; real-user sessions should never enable this.
 
 **Firestore-write debugging:**
-- **`context.firstUndefinedPath` on Firestore `invalid-argument` errors** — for `bbWrapWrites` and `bbFirestoreOp`, BB now walks the write payload (depth 4, max 200 keys, cycle-safe) and surfaces the exact dotted/indexed path of the first `undefined` value (e.g. `sections[5].subtitle`). Firestore's own error tells you the document ID but not the field within; this closes that gap. `context.payloadShape` sketches the top 2 levels for additional triage. The previous top-level `writeFields` / `undefinedFields` fields still ship.
+- **`context.firstUndefinedPath` on Firestore `invalid-argument` errors** — for `bbWrapWrites` and `bbFirestoreOp`, BB now walks the write payload (depth 4, max 200 keys, cycle-safe) and surfaces the exact dotted/indexed path of the first `undefined` value (e.g. `sections[5].subtitle`). Firestore's own error tells you the document ID but not the field within; this closes that gap. `context.payloadShape` sketches the top 2 levels for additional triage. The previous top-level `writeFields` / `undefinedFields` fields still ship. (For writes through `bbFirestoreOp`, pass a function, `() => setDoc(ref, data)`, or use `bbWrapWrites`: the SDK throws invalid-argument synchronously, so an already-created promise can't capture it.)
 - **`context.callerFrame` on `bbWrapWrites` + `bbFirestoreOp` errors** — extracted from a stack snapshot taken BEFORE the SDK call, so the app frame survives the await/microtask boundary. Same `extractTopAppFrame` helper as ADR-0016. No more grep to find which file called the wrapped write.
 - **Cascade dedup strengthened** — when a single throw cascades through multiple try/catch layers (firebase wrapper + service-layer console.error + UI-layer console.error), the panel report now collapses them via tail-substring matching (last 80 chars) within a 250 ms window. Previously the prefix-only matcher missed cascades like `"Firestore updateDoc failed: Function updateDoc()..."` vs `"Save failed: Function updateDoc()..."`. Sources merge into `firedAs[]`.
 - **`session.uniqueIncidents`** — post-cascade-dedup distinct-incident count alongside the raw `errorCount`. A session that records 3 wrappings of one throw now reads `errorCount: 3, uniqueIncidents: 1` instead of looking like 3 problems.
@@ -57,13 +88,13 @@ Two themes in this release: Firestore-write debugging wins from a v1.9.3 dogfood
 
 ### What's new in v1.8.0:
 - **Framework-internal error suppression**: errors with stacks 100% inside react-dom / next/dist / pdfjs / webpack-internal are flagged `internal: true` and hidden by default in panel and bb-check (use `--include-internal` to show)
-- **`urlReachability` on resource_load**: every failed image/script/link is classified as `ok`, `http_error`, `cors_blocked`, `unreachable_origin`, or `unknown` — distinguishes DNS-dead from CORS-blocked instantly
+- **`urlReachability` on resource_load**: every failed image/script/link is classified as `ok`, `http_error`, `cors_blocked` (renamed `opaque_response` in v1.9.0), `unreachable_origin`, or `unknown` — distinguishes DNS-dead from reachable-but-unreadable instantly
 - **CDN transform fingerprint collapse**: Cloudflare `cdn-cgi/image/width=400/...` and `width=600/...` variants of the same source URL now share one fingerprint
 - **Cloudflare/nginx error page detection**: HTML upstream-error responses are summarized to a single line in responseBody instead of dumping 4 KB of boilerplate HTML
 - **Firestore query context on permission errors**: `bbOnSnapshot` and `bbFirestoreOp` now auto-extract the queryPath and where-filter shape from the queryRef, so permission-denied errors include `queryPath` and `queryFilters` in context
-- **Build-aware errors**: every error doc now carries `metadata.buildSha` and `metadata.nodeEnv`; auto-detected from `NEXT_PUBLIC_BUILD_SHA`, `VERCEL_GIT_COMMIT_SHA`, `NETLIFY_COMMIT_REF`, `GITHUB_SHA`, or set via `init({ buildSha, nodeEnv })`
+- **Build-aware errors**: every error doc now carries `metadata.buildSha` and `metadata.nodeEnv` (refreshed on every recurrence, so they reflect the MOST RECENT occurrence); auto-detected from `NEXT_PUBLIC_BUILD_SHA`, `VERCEL_GIT_COMMIT_SHA`, `NETLIFY_COMMIT_REF`, `GITHUB_SHA`, or set via `init({ buildSha, nodeEnv })`
 - **Unique-user count**: errors track `uniqueUserCount` alongside `occurrences` so you can tell one-user bugs from everyone-bugs
-- **Stronger click auto-labels**: img alt, parent text, input placeholder/value all feed the autoLabel waterfall — no more bare `el: 'img'` breadcrumbs
+- **Stronger click auto-labels**: img alt, parent text (non-interactive targets only), input placeholder/label/name (button-type value only; typed values are never recorded) all feed the autoLabel waterfall — no more bare `el: 'img'` breadcrumbs
 - **bb-check filter flags**: `--path=/admin/sites`, `--source=network`, `--since=1h`, `--include-internal`
 - **`bb-ack <fingerprint>`** new CLI command: mark a fingerprint acknowledged for `--for 7d` (default) with an optional `--comment`. Acked errors hide from bb-check until TTL expires. `bb-ack --list` to see what's currently muted; `--clear` to remove
 - **Silent stale cleanup**: bb-check now silently drops docs >7 days old at the start of each run, replacing the noisy "501-doc warning"
@@ -73,9 +104,9 @@ Two themes in this release: Firestore-write debugging wins from a v1.9.3 dogfood
 
 ### Foundation (carried from v1.x):
 - Error capture with dedup (fingerprint-based, local cache + Firestore query)
-- Breadcrumb trails: clicks, network, navigation, errors, console, forms, resources
+- Breadcrumb trails: clicks, network (fetch + XHR), navigation, errors, console, forms, resources
 - Network noise filtering (Firestore/Auth/HMR auto-excluded)
-- Activity TTL (48h auto-expiry via Firestore `expireAt` field)
+- Activity expiry: `expireAt` 48h after write; expired docs are deleted by the next `bb:check`, or by Firestore itself if a TTL policy on `expireAt` is enabled
 - Flush on page unload + recovery on next init
 - Panel: fullscreen mode, search, copy JSON/Markdown, collapsible stack traces, breadcrumb filter chips
 - CLI: bb-check, bb-health, bb-timeline, bb-clear, **bb-ack**
@@ -88,14 +119,16 @@ Two themes in this release: Firestore-write debugging wins from a v1.9.3 dogfood
    - Each error includes breadcrumbs showing the user actions that led to the error
 
 2. **When making significant changes**, run: `npm run bb:health`
-   - Check the verdict field for a quick status
+   - Check the verdict field for a quick status (covers errors seen, by `lastSeen`, in the last 24h; "Total occurrences" is lifetime)
    - Check for new errors introduced by your changes
 
-3. **When investigating "nothing happens" bugs**, run: `npm run bb:timeline`
-   - Look for gaps: a click event with no following network call = broken handler
+3. **When investigating "nothing happens" bugs**, run: `npm run bb:timeline` (`-- --minutes N` for a wider window; default 5)
+   - Look for gaps: a click event with no following network call = likely broken handler (fetch and XHR are captured; `sendBeacon` and WebSocket traffic are not, so rule those out first)
 
 4. **After a major fix**, run: `npm run bb:clear`
-   - Clears errors older than 1 day by default (`--all` for everything, `--days N` for custom)
+   - Clears docs created more than 1 day ago by default (`--all` for everything, `--days N` for custom, `--fingerprint <hash>` for one error; options can't be combined)
+
+All `bb-*` CLIs support `--help`, accept `--flag value` or `--flag=value`, and exit 1 on unknown or malformed flags instead of ignoring them.
 
 ### init() config options:
 - `db` — Firestore instance (required for persistence)
@@ -106,20 +139,24 @@ Two themes in this release: Firestore-write debugging wins from a v1.9.3 dogfood
 - `tags` — Record<string, string>, arbitrary metadata on every document
 - `sessionTag` — string, runner-supplied correlation token persisted as a top-level field on each error doc. Auto-picked-up from `window.__BB_SESSION_TAG__` if not passed explicitly. Trimmed to 64 chars
 - `failFast` — boolean (default false). When true, BB sets `window.__BB_FAIL_FAST_TRIPPED__` and dispatches a `blackbox:fail-fast` CustomEvent on the first non-internal error. Auto-enabled when `window.__BB_FAIL_FAST__` is truthy at init. Intended for unattended audit runners; do NOT enable in real-user sessions
-- `networkExcludePatterns` — string[], URL patterns to skip in network breadcrumbs (defaults: Firestore, Auth, HMR, Next.js internals)
+- `firestoreFns` — Firestore SDK functions from the app's own `firebase/firestore` import (`collection, addDoc, updateDoc, deleteDoc, query, where, orderBy, limit, getDocs, increment, onSnapshot, serverTimestamp, Timestamp`). Avoids a second SDK copy; `increment` makes occurrence counts atomic, `onSnapshot` is used by `bbOnSnapshot`
+- `networkExcludePatterns` — string[], URL patterns to skip in network tracking, added to the defaults (Firestore, Auth incl. `securetoken.googleapis.com`, HMR, Next.js internals)
 - `maxBreadcrumbs` — number (default: 80)
-- `stripQueryParams` — boolean (default: true)
-- `consoleIgnorePatterns` — string[], console messages to skip
+- `stripQueryParams` — boolean (default: true). Also strips queries inside `#hash` routes and `key=value` fragments like `#access_token=...`
+- `captureRequestBodies` — boolean (default: false). Default still captures same-origin POST/PUT/PATCH request bodies on breadcrumbs, same-origin failed-request bodies on errors, and non-2xx response bodies for any host; secret-looking request-body keys are `[redacted]`. `true` extends request-body capture to cross-origin hosts and all methods
+- `consoleIgnorePatterns` — string[], console messages to skip, added to the defaults
 - `sanitize` — function to redact/drop breadcrumbs before storage
+- Options passed as `undefined` use their default
 
 ### Methods on the `blackbox` object:
 - `blackbox.init(config)` — initialize with Firestore and options
 - `blackbox.setUser({ id, role })` — tag all subsequent errors/activity with user context
 - `blackbox.setTag(key, value)` — add/update a metadata tag
 - `blackbox.setEnvironment(env)` — change the environment tag
+- (`setUser` / `setTag` / `setEnvironment` calls made before `init()` are applied when `init()` runs; explicit `init()` options win, tags merge. No-ops on the server.)
 - `blackbox.log(event, data)` — add a custom breadcrumb
-- `blackbox.captureError(error, context)` — manually capture an error
-- `blackbox.destroy()` — remove all hooks, clear timers, reset state
+- `blackbox.captureError(error, context)` — manually capture an error (`source: 'manual'`)
+- `blackbox.destroy()` — remove all hooks, clear timers, reset state. Keeps `onUpdate` subscribers and registered diagnostics (their owners remove them)
 
 ### bbTrackAuth(auth) vs setUser():
 - `bbTrackAuth(auth)` listens to Firebase Auth state changes and logs sign-in/sign-out events as **breadcrumbs** (activity trail). It does NOT set user context on error documents.
@@ -127,32 +164,36 @@ Two themes in this release: Firestore-write debugging wins from a v1.9.3 dogfood
 - **Use both:** `bbTrackAuth` for the activity trail, `setUser` for error attribution.
 
 ### Panel capabilities:
-The launcher icon sits flush in the bottom-left corner: 8×8 green dot when there are no errors, expanding to a 22×22 number badge (amber 1–5, red 6+) when errors arrive. Click it to open the panel, which includes:
-- **Live tab:** real-time errors with expandable breadcrumb trails
+The launcher icon sits flush in the bottom-left corner: 8×8 green dot when there are no errors, expanding to a 22×22 number badge (amber 1–5, red 6+) when errors arrive. The badge counts unique errors, excluding framework-internal ones. The panel renders nothing until `blackbox.init()` has enabled BB, and must be rendered outside `BlackBoxProvider`. Click the launcher to open the panel, which includes:
+- **Live tab:** real-time errors (the last 50) with expandable rows: full message, `action_hint` + clickable `action_url`, collapsible stack, collapsible "Context (N)" list (non-underscore context keys such as `urlReachability`, `responseBody`, `firstUndefinedPath`, `callerFrame`, `diagnostics`; values cut at 400 chars), breadcrumb trail. Storm-collapsed rows show `xN`; footer reads `N unique · M total this session` when they differ
 - **History tab:** persisted errors from Firestore, timeline view with time-range selector
-- **Health tab:** HEALTHY/WARNING/UNHEALTHY verdict, stats, top errors
+- **Health tab:** HEALTHY/WARNING/UNHEALTHY verdict for errors seen in the last 24h, stats, top errors
+- **Query errors:** a failed Firestore query (e.g. missing index) shows a red "Query failed" block with a "Create index" link instead of an empty list
+- **Framework-internal errors:** hidden by default; a per-tab banner shows the count with a Show/Hide toggle
 - **Fullscreen mode:** expand toggle in header
 - **Search:** filter errors by text across message, source, path
-- **Copy:** JSON and Markdown copy buttons per error; JSON full-report copy in panel header
+- **Copy:** JSON and Markdown copy buttons per error; JSON full-report copy in panel header. If the clipboard is blocked, a selectable text overlay opens instead
 - **Stack traces:** collapsible, monospace formatted
-- **Breadcrumb filter chips:** toggle click, network, error, navigation, performance, custom
-- **Keyboard shortcut:** Ctrl+Shift+B / Cmd+Shift+B to toggle
+- **Breadcrumb filter chips:** one chip per breadcrumb type present on that error (e.g. Click, Network, Warning, Firebase, Perf); click to hide/show that type
+- **Keyboard:** Ctrl+Shift+B / Cmd+Shift+B toggles the panel. Esc closes the report overlay, then the delete confirm, then the panel (only when focus is in the panel or on the page body). All controls are Tab-reachable buttons
 
 ### Log format:
 Each error in `dev-logs/blackbox.json` has:
 - `message` + `stack` — what broke and where
-- `source` — how it was caught (window.onerror, network, firebase, console.error, etc.)
-- `fingerprint` — unique hash for grouping identical errors
+- `source` — how it was caught (window.onerror, unhandled_promise, network, storage, firebase, firebase_listener, console.error, resource_load, form_validation, react_boundary, manual)
+- `fingerprint` — unique hash for grouping identical errors (`groupingInputs.topFrame` is normalized, without line numbers; real line numbers are in `stack` / `context.callerFrame`)
 - `breadcrumbs` — array of last 80 actions before the error
 - `occurrences` — how many times this exact error repeated
 - `context` — extra details specific to the error type
+- `metadata.buildSha` / `metadata.nodeEnv` — build of the most recent occurrence
 - `environment`, `tags`, `user` — context tags set by the app
-- Click breadcrumbs may include `autoLabel` (aria-label/title fallback when text is empty)
+- Click breadcrumbs may include `autoLabel` (aria-label/title/alt/label fallback). In the copied panel report, a click with empty `text` shows it as `label`
+- Network breadcrumbs may include `aborted: true` (intentional cancel, no error row) and `responseType` (`opaque` / `opaqueredirect`); form breadcrumbs may include `blocked: true` (native validation stopped the submit)
 
 ### Important:
 - Errors with high `occurrences` are systemic — fix those first
 - Look at the FULL breadcrumb trail. The cause is usually 2-5 actions before the crash
 - If `dev-logs/` files are empty, run `npm run bb:check` first (auto-creates the directory)
 - The `__blackbox` Firestore collection is dev-only. Do not use it in app logic
-- Activity documents auto-expire after 48 hours
+- Activity documents expire 48 hours after they're written: removed by the next `bb:check`, or automatically if a Firestore TTL policy on `expireAt` is enabled
 - **Cloud Firestore requires composite indexes** for CLI tools — see README "Firestore Indexes" section

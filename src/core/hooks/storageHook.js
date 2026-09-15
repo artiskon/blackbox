@@ -21,8 +21,11 @@ import blackbox from '../blackbox.js';
  * The wrapper preserves the underlying fetch's return value and rethrows
  * errors verbatim — it never alters the call's success/failure shape.
  */
-export async function bbR2Fetch(input, init = {}, details = {}) {
-  const method = (init.method || 'GET').toUpperCase();
+export async function bbR2Fetch(input, init, details = {}) {
+  // Same rules as the network hook: init may be null, and a Request input
+  // carries its own method.
+  const request = typeof Request !== 'undefined' && input instanceof Request ? input : null;
+  const method = (init?.method || request?.method || 'GET').toUpperCase();
   let url = '';
   try {
     url = typeof input === 'string' ? input : input?.url || String(input);
@@ -48,6 +51,11 @@ export async function bbR2Fetch(input, init = {}, details = {}) {
   } catch (err) {
     try {
       const duration = Date.now() - start;
+      // Intentional cancel (e.g. user cancels an upload) isn't a failure:
+      // breadcrumb only, no error row. Same rule as the network hook;
+      // timeouts (AbortSignal.timeout) still record.
+      const signal = init?.signal || input?.signal;
+      const aborted = err?.name === 'AbortError' || (!!signal?.aborted && err?.name !== 'TimeoutError');
       const ctx = {
         method,
         url: safeUrl,
@@ -58,13 +66,15 @@ export async function bbR2Fetch(input, init = {}, details = {}) {
         error: err?.message || String(err),
         ...(url !== safeUrl ? { _rawUrl: url } : {}),
       };
-      blackbox._addBreadcrumb('network', { method, url: safeUrl, status: 0, duration, ok: false, error: ctx.error, _storage: true });
-      blackbox._recordError({
-        message: `Storage error: ${method} ${safeUrl} - ${ctx.error}`,
-        stack: err?.stack || '',
-        source: 'storage',
-        context: ctx
-      });
+      blackbox._addBreadcrumb('network', { method, url: safeUrl, status: 0, duration, ok: false, error: ctx.error, ...(aborted ? { aborted: true } : {}), _storage: true });
+      if (!aborted) {
+        blackbox._recordError({
+          message: `Storage error: ${method} ${safeUrl} - ${ctx.error}`,
+          stack: err?.stack || '',
+          source: 'storage',
+          context: ctx
+        });
+      }
     } catch { /* ignore */ }
     throw err;
   }

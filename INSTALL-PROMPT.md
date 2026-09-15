@@ -25,7 +25,8 @@ Install and set up BlackBox error monitoring in this app. Follow these steps exa
 
 5. Add the floating debug panel:
    - Import { BlackBoxPanel } from '@artiskon/blackbox/components'
-   - Render <BlackBoxPanel /> at the root layout level, OUTSIDE the error boundary
+   - Render <BlackBoxPanel /> at the root layout level, OUTSIDE the error boundary, as a sibling after it (e.g. <><BlackBoxProvider>{children}</BlackBoxProvider><BlackBoxPanel /></>). On a render crash the provider replaces all of its children with the fallback, so a panel nested inside it would disappear on exactly the crash you need to inspect
+   - The panel renders nothing until blackbox.init() has enabled BlackBox, so it appears only after the init component's effect runs
 
 6. Add these scripts to package.json:
    "bb:check": "bb-check",
@@ -41,19 +42,21 @@ Install and set up BlackBox error monitoring in this app. Follow these steps exa
    - IF EMULATOR: No rule changes needed. Skip to step 9.
    - IF CLOUD FIRESTORE: Ask the user before modifying any rules. NEVER add open rules.
    - IF UNSURE: Ask the user.
+   - The bb-* CLI tools do NOT need client rules opened. For cloud Firestore they read through Firebase Admin: install firebase-admin as a dev dependency (npm i -D firebase-admin) and have the user authenticate with `gcloud auth application-default login`, set GOOGLE_APPLICATION_CREDENTIALS, or place serviceAccountKey.json in the project root (add it to .gitignore). Every bb-* command supports --help.
 
 9. FIRESTORE INDEXES (Cloud Firestore only, skip if using emulator):
    - Read the "Firestore Indexes" section in node_modules/@artiskon/blackbox/README.md
    - Add the indexes to the project's firestore.indexes.json
    - Deploy with: firebase deploy --only firestore:indexes
    - Without these indexes, error deduplication and CLI queries will fail silently
+   - Optional: activity docs carry a 48h `expireAt`. `bb:check` deletes expired ones on each run; to let Firestore do it instead, ask the user before enabling a TTL policy: gcloud firestore fields ttls update expireAt --collection-group=__blackbox --enable-ttl
 
 10. Add the BlackBox debugging workflow to CLAUDE.md:
    - Read CLAUDEMD-SNIPPET.md inside node_modules/@artiskon/blackbox/ and paste its contents into CLAUDE.md (create if needed)
 
 11. Verify setup:
     - Open the app in browser
-    - A small green dot (8×8px) should appear flush in the bottom-left corner
+    - A small green dot (8×8px) should appear flush in the bottom-left corner (if it doesn't, blackbox.init() hasn't enabled BlackBox: check the init component is mounted and `enabled: true` is passed)
     - Click it to open the BlackBox panel
     - Trigger a test error — the dot should grow into an amber/red number badge and pulse once
     - The panel header has a Copy button that produces a JSON diagnostic report

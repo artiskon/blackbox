@@ -1,6 +1,20 @@
 import blackbox from '../blackbox.js';
 import { extractTopAppFrame } from '../fingerprint.js';
 
+// Firestore's own plain-object rule (the SDK's isPlainObject).
+function isPlainObject(v) {
+  if (!v || typeof v !== 'object') return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+
+// payloadShape label for a non-array value: class name for SDK objects
+// (e.g. 'DocumentReference'), typeof otherwise.
+function leafType(v) {
+  if (v && typeof v === 'object' && !isPlainObject(v)) return v.constructor?.name || 'object';
+  return typeof v;
+}
+
 /**
  * Walk a Firestore write payload to find the first `undefined` value and
  * map a 2-level shape of the keys.
@@ -17,6 +31,11 @@ import { extractTopAppFrame } from '../fingerprint.js';
  *   real-world cases without chasing pathological structures)
  * - 200 keys total visited (bail early on huge payloads)
  * - cycle-safe via a WeakSet
+ * - only walks arrays and plain objects, same rule as the SDK's own
+ *   isPlainObject. DocumentReference, Timestamp, FieldValue sentinels etc.
+ *   are leaves; walking into a DocumentReference reaches the Firestore
+ *   instance, whose internals have undefined fields and produced bogus
+ *   paths like `author.firestore._settings.credentials` (ADR-0022).
  */
 function summarizePayload(data, maxDepth = 4, maxKeys = 200) {
   const out = { firstUndefinedPath: null, payloadShape: null };
@@ -32,7 +51,7 @@ function summarizePayload(data, maxDepth = 4, maxKeys = 200) {
       return;
     }
     if (value === null) return;
-    if (typeof value !== 'object') return;
+    if (!Array.isArray(value) && !isPlainObject(value)) return;
     if (seen.has(value)) return;
     seen.add(value);
     if (depth >= maxDepth) return;
@@ -61,17 +80,17 @@ function summarizePayload(data, maxDepth = 4, maxKeys = 200) {
         if (child === undefined) shapeNode[k] = 'undefined';
         else if (child === null) shapeNode[k] = 'null';
         else if (Array.isArray(child)) shapeNode[k] = `array[${child.length}]`;
-        else if (typeof child === 'object') {
+        else if (isPlainObject(child)) {
           shapeNode[k] = {};
           for (const k2 of Object.keys(child).slice(0, 12)) {
             const v2 = child[k2];
             if (v2 === undefined) shapeNode[k][k2] = 'undefined';
             else if (v2 === null) shapeNode[k][k2] = 'null';
             else if (Array.isArray(v2)) shapeNode[k][k2] = `array[${v2.length}]`;
-            else shapeNode[k][k2] = typeof v2;
+            else shapeNode[k][k2] = leafType(v2);
           }
         } else {
-          shapeNode[k] = typeof child;
+          shapeNode[k] = leafType(child);
         }
       }
       if (child === undefined) {
@@ -97,6 +116,24 @@ function permissionDeniedActionHint(documentPath, queryPath, queryDescription) {
   return `Open firestore.rules and verify a matching match{} block grants the requesting user access to ${target}${desc}. Check the user's auth state and any role/uid fields the rule reads.`;
 }
 
+// ` on <collection>` for the recorded message, or '' when no path is known.
+// SDK messages like "Missing or insufficient permissions." never name the
+// collection and the SDK stack has no app frames, so without this, denials on
+// `invoices` and `clients` from one page share a fingerprint (and the 200ms
+// message-keyed dedup drops the second). Doc IDs become `:id` and a trailing
+// doc ID is dropped, so custom/slug IDs can't fragment fingerprints:
+// 'users/abc/projects/xyz' → 'users/:id/projects'. Inserted BEFORE the colon
+// so ADR-0023's tail-substring cascade dedup still matches. Collection-group
+// paths keep their prefix: '**/posts' → ' on **/posts'.
+function onCollection(path) {
+  if (typeof path !== 'string') return '';
+  if (path.startsWith('**/')) return ` on ${path.slice(0, 120)}`;
+  const segs = path.split('/').filter(Boolean);
+  if (segs.length % 2 === 0) segs.pop();
+  if (segs.length === 0) return '';
+  return ` on ${segs.map((s, i) => (i % 2 ? ':id' : s)).join('/').slice(0, 120)}`;
+}
+
 /**
  * Best-effort introspection of a Firestore Query / CollectionReference.
  * Reads the SDK's internal `_query` / `_path` shapes — these are stable in
@@ -113,40 +150,49 @@ function describeQueryRef(queryRef) {
   if (!queryRef) return null;
   const out = {};
   try {
-    // CollectionReference / DocumentReference: has `path`
-    if (typeof queryRef.path === 'string') {
-      out.queryPath = queryRef.path.slice(0, 200);
-    }
-    // Query: has `_query.path.canonicalString()` or similar internal shape
+    // Query / CollectionReference: `_query.path` is a BasePath that shares
+    // its parent's segments array (offset/len), so `.parent` refs would join
+    // extra segments; canonicalString() slices correctly. Collection-group
+    // queries have an empty path and carry the collection id separately.
     const internal = queryRef._query || queryRef._delegate?._query;
     if (internal) {
-      const segments = internal.path?.segments;
-      if (Array.isArray(segments)) {
-        out.queryPath = segments.join('/').slice(0, 200);
+      if (internal.collectionGroup) {
+        out.queryPath = `**/${internal.collectionGroup}`.slice(0, 200);
       } else if (typeof internal.path?.canonicalString === 'function') {
         out.queryPath = internal.path.canonicalString().slice(0, 200);
       }
       // Filters: where(field, op, value) tuples are stored as filters[].
-      const filters = internal.filters || internal.explicitOrderBy || [];
+      const filters = internal.filters;
       if (Array.isArray(filters) && filters.length > 0) {
-        out.queryFilters = filters.slice(0, 8).map(f => {
-          try {
-            const field = f.field?.canonicalString?.() || f.field?.segments?.join('.') || '?';
-            const op = f.op?._opStr || f.op || '?';
-            // Don't capture filter values — they may carry user data.
-            return `${field} ${op} ?`;
-          } catch { return '?'; }
-        });
+        out.queryFilters = filters.slice(0, 8).map(f => describeFilter(f).slice(0, 200));
       }
+    } else if (typeof queryRef.path === 'string') {
+      // DocumentReference: no `_query`, but has `path`
+      out.queryPath = queryRef.path.slice(0, 200);
     }
   } catch { /* ignore — internal SDK shape isn't guaranteed */ }
   return Object.keys(out).length > 0 ? out : null;
 }
 
+// `field op ?` for a where() filter; or()/and() CompositeFilters recurse into
+// `(a == ? or b == ?)`. Don't capture filter values — they may carry user data.
+function describeFilter(f) {
+  try {
+    if (Array.isArray(f?.filters)) return `(${f.filters.map(describeFilter).join(` ${f.op} `)})`;
+    const field = f.field?.canonicalString?.() || f.field?.segments?.join('.') || '?';
+    const op = f.op?._opStr || f.op || '?';
+    return `${field} ${op} ?`;
+  } catch { return '?'; }
+}
+
 /**
  * Wraps a Firestore operation promise with error tracking.
  * @param {string} operationName - e.g., 'getDoc', 'setDoc', 'updateDoc', 'deleteDoc', 'getDocs'
- * @param {Promise} promise - the Firestore operation promise
+ * @param {Promise|Function} promise - the Firestore operation promise, or a
+ *   function returning it. For writes pass the function form
+ *   (`() => setDoc(ref, data)`) or use bbWrapWrites: the SDK throws
+ *   invalid-argument synchronously, before a promise exists, so a finished
+ *   promise argument can never capture it.
  * @param {object} [details] - optional details:
  *   { path: 'collection/docId', data: {...}, queryRef, queryDescription }
  *   - queryRef: the Query/CollectionReference for getDocs/onSnapshot — auto-extracts path+filters
@@ -159,7 +205,7 @@ export async function bbFirestoreOp(operationName, promise, details = {}) {
   // on a local until GC); the only cost paid on every call.
   const callerStack = (() => { try { return new Error().stack || ''; } catch { return ''; } })();
   try {
-    const result = await promise;
+    const result = await (typeof promise === 'function' ? promise() : promise);
     try {
       blackbox._addBreadcrumb('firebase', {
         action: operationName,
@@ -200,7 +246,7 @@ export async function bbFirestoreOp(operationName, promise, details = {}) {
         if (frame) ctx.callerFrame = frame.slice(0, 200);
       } catch { /* ignore */ }
       blackbox._recordError({
-        message: `Firestore ${operationName} failed: ${error.message || error.code}`,
+        message: `Firestore ${operationName} failed${onCollection(ctx.queryPath || ctx.documentPath)}: ${error.message || error.code}`,
         stack: error.stack || '',
         source: 'firebase',
         context: ctx
@@ -275,8 +321,10 @@ export function bbWrapWrites(firestoreFns) {
   // without needing a typeof window guard at the call site.
   if (typeof window === 'undefined') return firestoreFns ?? {};
 
-  const out = {};
-  const writeOps = ['addDoc', 'setDoc', 'updateDoc', 'deleteDoc'];
+  // Start from a copy so non-write keys (getDoc, writeBatch, ...) survive on
+  // the client too, matching the server passthrough and the `T` return type.
+  const out = { ...firestoreFns };
+  const writeOps =['addDoc', 'setDoc', 'updateDoc', 'deleteDoc'];
   for (const op of writeOps) {
     const original = firestoreFns?.[op];
     if (typeof original !== 'function') continue;
@@ -303,7 +351,7 @@ export function bbWrapWrites(firestoreFns) {
             path,
             code: syncErr?.code || null,
           });
-          const syncCtx = { code: syncErr?.code, operation: op, documentPath: path };
+          const syncCtx = { code: syncErr?.code || null, operation: op, documentPath: path };
           if (callerFrame) syncCtx.callerFrame = callerFrame;
           if (syncErr?.code === 'invalid-argument' && writeData && typeof writeData === 'object') {
             try {
@@ -317,7 +365,7 @@ export function bbWrapWrites(firestoreFns) {
             } catch { /* ignore */ }
           }
           blackbox._recordError({
-            message: `Firestore ${op} failed (sync): ${syncErr?.message || syncErr?.code || syncErr}`,
+            message: `Firestore ${op} failed (sync)${onCollection(path)}: ${syncErr?.message || syncErr?.code || syncErr}`,
             stack: syncErr?.stack || '',
             source: 'firebase',
             context: syncCtx
@@ -343,7 +391,7 @@ export function bbWrapWrites(firestoreFns) {
                 code: err?.code || null,
               });
               const ctx = {
-                code: err?.code,
+                code: err?.code || null,
                 operation: op,
                 documentPath: path,
               };
@@ -366,7 +414,7 @@ export function bbWrapWrites(firestoreFns) {
               }
               if (callerFrame) ctx.callerFrame = callerFrame;
               blackbox._recordError({
-                message: `Firestore ${op} failed: ${err?.message || err?.code || err}`,
+                message: `Firestore ${op} failed${onCollection(path)}: ${err?.message || err?.code || err}`,
                 stack: err?.stack || '',
                 source: 'firebase',
                 context: ctx
@@ -383,7 +431,13 @@ export function bbWrapWrites(firestoreFns) {
 
 export async function bbOnSnapshot(queryRef, onNext, onError, opts = {}) {
   try {
-    const { onSnapshot } = await import('firebase/firestore');
+    // Prefer the host app's SDK (init({ firestoreFns: { onSnapshot } })), same
+    // as persistence.js. BB's own `import('firebase/firestore')` resolves from
+    // BB's install location; in submodule/path installs that is a second SDK
+    // copy that rejects the app's query ("Did you pass a reference from a
+    // different Firestore SDK?").
+    const onSnapshot = blackbox._getConfig().firestoreFns?.onSnapshot
+      || (await import('firebase/firestore')).onSnapshot;
     return onSnapshot(
       queryRef,
       (snapshot) => {
@@ -394,51 +448,46 @@ export async function bbOnSnapshot(queryRef, onNext, onError, opts = {}) {
             fromCache: snapshot.metadata?.fromCache || false
           });
         } catch { /* ignore */ }
-        try { onNext(snapshot); } catch { /* ignore */ }
+        // App callbacks are NOT wrapped: the SDK already runs each event in
+        // its own setTimeout, so a throw reaches window.onerror (and the
+        // errorHook) exactly as with plain onSnapshot. Catching here hid
+        // data-mapping bugs in snapshot handlers.
+        onNext(snapshot);
       },
       (error) => {
         try {
           const ctx = { code: error.code, message: error.message };
           if (opts.description) ctx.queryDescription = String(opts.description).slice(0, 200);
-          // describeQueryRef is defined above in this module; re-inline a
-          // tiny version here to avoid a circular import.
-          try {
-            const internal = queryRef?._query || queryRef?._delegate?._query;
-            if (internal) {
-              const segments = internal.path?.segments;
-              if (Array.isArray(segments)) {
-                ctx.queryPath = segments.join('/').slice(0, 200);
-              }
-              const filters = internal.filters;
-              if (Array.isArray(filters) && filters.length > 0) {
-                ctx.queryFilters = filters.slice(0, 8).map(f => {
-                  try {
-                    const field = f.field?.canonicalString?.() || f.field?.segments?.join('.') || '?';
-                    const op = f.op?._opStr || f.op || '?';
-                    return `${field} ${op} ?`;
-                  } catch { return '?'; }
-                });
-              }
-            } else if (typeof queryRef?.path === 'string') {
-              ctx.queryPath = queryRef.path.slice(0, 200);
-            }
-          } catch { /* ignore */ }
+          Object.assign(ctx, describeQueryRef(queryRef) || {});
           if (error.code === 'permission-denied') {
             ctx.action_hint = permissionDeniedActionHint(null, ctx.queryPath, ctx.queryDescription);
           }
           blackbox._recordError({
-            message: `Firestore listener error: ${error.message || error.code}`,
+            message: `Firestore listener error${onCollection(ctx.queryPath)}: ${error.message || error.code}`,
             stack: error.stack || '',
             source: 'firebase_listener',
             context: ctx
           });
         } catch { /* ignore */ }
-        if (onError) {
-          try { onError(error); } catch { /* ignore */ }
-        }
+        if (onError) onError(error);
       }
     );
   } catch (e) {
-    console.warn('[BlackBox] bbOnSnapshot failed:', e);
+    // Attaching failed (SDK copy mismatch, null query, firebase missing): the
+    // listener never runs, so record it and hand it to onError instead of a
+    // console.warn that the '[BlackBox]' filter keeps out of the error log.
+    try {
+      const ctx = { code: e?.code };
+      if (opts.description) ctx.queryDescription = String(opts.description).slice(0, 200);
+      const described = describeQueryRef(queryRef);
+      if (described) Object.assign(ctx, described);
+      blackbox._recordError({
+        message: `bbOnSnapshot could not attach listener${onCollection(described?.queryPath)}: ${e?.message || e}`,
+        stack: e?.stack || '',
+        source: 'firebase_listener',
+        context: ctx
+      });
+    } catch { /* ignore */ }
+    if (onError) onError(e);
   }
 }

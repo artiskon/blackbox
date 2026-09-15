@@ -1,30 +1,35 @@
 #!/usr/bin/env node
 
 import { connectToFirestore } from './shared/firebase-connect.js';
-import { ensureDevLogs } from './shared/utils.js';
+import { parseCliArgs, exitWithUsage } from './shared/utils.js';
 import { collection, query, where, getDocs, writeBatch, doc, Timestamp } from 'firebase/firestore';
 import fs from 'fs';
 import path from 'path';
 
+const USAGE = `Usage: bb-clear [option]
+  (no option)               Delete docs created more than 1 day ago
+  --days N                  Delete docs created more than N days ago (N >= 1)
+  --fingerprint <hash>      Delete only docs for one fingerprint (aliases: --fp, --id)
+  --all                     Delete every doc and the local dev-logs/ BlackBox files
+  -h, --help                Show this help
+Both --flag value and --flag=value work. Options can't be combined.`;
+
+// Strict on purpose: this command deletes data, so an unrecognized or
+// malformed flag must fail loudly instead of falling back to the default
+// "older than 1 day" delete.
 function parseArgs() {
-  const args = process.argv.slice(2);
-  let days = 1;
-  let all = false;
-  let fingerprint = null;
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--all') all = true;
-    if (args[i] === '--days' && args[i + 1]) {
-      days = parseInt(args[i + 1], 10);
-      if (isNaN(days)) days = 1;
-    }
-    if (args[i] === '--fingerprint' && args[i + 1]) {
-      fingerprint = args[i + 1];
-    }
-    if (args[i] === '--fp' && args[i + 1]) {
-      fingerprint = args[i + 1];
-    }
+  const { flags } = parseCliArgs({
+    '--all': 'bool',
+    '--days': 'int',
+    '--fingerprint|--fp|--id': 'string',
+  }, USAGE);
+  const all = flags.all === true;
+  const fingerprint = flags.fingerprint ?? null;
+  if (flags.days !== undefined && flags.days < 1) exitWithUsage('--days must be 1 or more', USAGE);
+  if ([all, flags.days !== undefined, fingerprint !== null].filter(Boolean).length > 1) {
+    exitWithUsage('Use only one of --all, --days, --fingerprint', USAGE);
   }
-  return { days, all, fingerprint };
+  return { days: flags.days ?? 1, all, fingerprint };
 }
 
 async function main() {

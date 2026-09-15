@@ -5,7 +5,7 @@
 
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const NUMERIC_ID_RE = /\/\d+(?=\/|$)/g;
-const HASH_SEGMENT_RE = /\/[a-zA-Z0-9]{15,}(?=\/|$)/g; // long hash-like path segments
+const HASH_SEGMENT_RE = /\/([A-Za-z0-9_-]{15,})(?=\/|$)/g; // long path segments, replaced only if isIdLike
 const FILE_WITH_HASH_RE = /\/[^/]*_[a-f0-9]{6,}\.[a-z]{2,4}$/i; // file_abc123.jpg
 // Frames we treat as "framework noise" when extracting a top app frame.
 // IMPORTANT: do NOT match a bare `webpack` token. In Next.js dev mode, every
@@ -13,7 +13,7 @@ const FILE_WITH_HASH_RE = /\/[^/]*_[a-f0-9]{6,}\.[a-z]{2,4}$/i; // file_abc123.j
 // matching `webpack` here would skip ALL frames and leave callerFrame empty.
 // Framework code under that prefix is still caught by the `node_modules`
 // alternation; webpack runtime is caught by `__webpack`.
-const SKIP_FRAMES_RE = /node_modules|blackbox|__webpack|hot-update|\(native\)|<anonymous>|bbHandleError|console\.wrapped|at wrapped \(|consoleHook|errorHook|networkHook/i;
+const SKIP_FRAMES_RE = /node_modules|blackbox|__webpack|hot-update|\(native\)|<anonymous>|bbHandleError|console\.wrapped|at wrapped \(|^wrapped@|consoleHook|errorHook|networkHook/i;
 
 // Frames that indicate framework/vendor code with no app responsibility.
 // If EVERY frame in a stack matches this, the error is "internal" — likely a
@@ -31,8 +31,8 @@ const SKIP_FRAMES_RE = /node_modules|blackbox|__webpack|hot-update|\(native\)|<a
 //   <anonymous>, (native)             — V8 synthetic frames
 const INTERNAL_ONLY_FRAMES_RE = /react-dom[-_/]|react\/cjs\/|next\/dist\/|next\/router|next-server|webpack-internal|__webpack_require__|\/_next\/static\/|\/\d{3,5}-[a-f0-9]{8,}\.(m?js)|pdfjs-dist\/|firebase\/|@firebase\/|@grpc\/|grpc-web|hot-update|chunk-[a-zA-Z0-9]+\.(m?js)|node_modules_.*\._\.(m?js)|<anonymous>|\(native\)/i;
 
-// Firestore doc ID pattern: collection/docId where docId is 20-char alphanumeric
-const FIRESTORE_DOC_PATH_RE = /\b([a-zA-Z_][a-zA-Z0-9_-]*)\/([\w]{16,28})\b/g;
+// Firestore doc ID pattern: collection/docId, docId replaced only if isIdLike
+const FIRESTORE_DOC_PATH_RE = /\b([a-zA-Z_][a-zA-Z0-9_-]*)\/([\w-]{16,28})(?![\w-])/g;
 
 // ISO timestamps in messages
 const ISO_TIMESTAMP_RE = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[.\dZ+-]*/g;
@@ -40,21 +40,55 @@ const ISO_TIMESTAMP_RE = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[.\dZ+-]*/g;
 // Chunk/bundle filenames that change across deploys
 const CHUNK_FILENAME_RE = /chunk-[a-zA-Z0-9]{6,}\.(m?js)/g;
 const BUNDLE_HASH_RE = /\b[a-f0-9]{8,}\.bundle\.(m?js)/g;
-// Turbopack/Next.js module filenames: _e190d1e5._.js, node_modules_next_dist_compiled_2ce9398a._.js
-const TURBOPACK_MODULE_RE = /_[a-f0-9]{6,}\._\.(m?js)/g;
+// Turbopack module filenames (hex or base36 with ~/-): _e190d1e5._.js,
+// app_page_tsx_0~3a212._.js, node_modules_next_dist_compiled_2ce9398a._.js
+const TURBOPACK_MODULE_RE = /_[0-9a-z~.-]{5,}\._\.(m?js)/gi;
+// name-<hash>.js: Vite/Rollup 8-char base64url (index-DiwrgTda.js) or webpack/Next
+// hex (page-1a2b3c4d5e6f7a8b.js). Callback requires a digit or uppercase so
+// kebab filenames (my-settings.js) keep their identity.
+const DASH_HASH_RE = /-([A-Za-z0-9_-]{8}|[a-f0-9]{9,})\.(m?js)/g;
+// Bare hash filenames (Next Turbopack prod): /_next/static/chunks/0a1b2c3d4e5f6a7b.js
+const BARE_HASH_FILE_RE = /\/[a-f0-9]{16,}\.(m?js)/g;
+// V8 frames (trimmed "at ...") and Firefox/Safari frames ("fn@url:line:col",
+// "global code@url:line:col"). The V8 "Error: <message>" line matches neither.
+const STACK_FRAME_RE = /^at\s|@.*:\d+(?::\d+)?\)?$/;
 
-// Trailing numeric identifiers in messages: "failure #5", "error (3)", "attempt 12"
-const TRAILING_NUMBER_RE = /\s*[#(]\d+[)]?\s*$/;
+// Trailing numeric identifiers in messages: "failure #5", "error (3)".
+// Numbers in the HTTP status range (100-599) are kept on purpose:
+// "Request failed (401)" and "(500)" are different failures.
+const TRAILING_NUMBER_RE = /\s*[#(](\d+)\)?\s*$/;
 
+/**
+ * True when a path segment / doc ID looks like a generated ID rather than a
+ * word. Plain alphanumeric: needs a digit, or exactly 20/28 chars (Firestore
+ * auto-ID / Firebase UID, which can lack digits). With `_` or `-` (nanoid,
+ * cus_..., user_...): needs a digit plus mixed case, or a 6+ digit run, so
+ * kebab slugs and camelCase names (createCheckoutSession) are left alone.
+ */
+export function isIdLike(seg) {
+  const hasDigit = /\d/.test(seg);
+  if (/^[A-Za-z0-9]+$/.test(seg)) return hasDigit || seg.length === 20 || seg.length === 28;
+  return (hasDigit && /[a-z]/.test(seg) && /[A-Z]/.test(seg)) || /\d{6,}/.test(seg);
+}
+
+function replaceHashSegments(path) {
+  return path.replace(HASH_SEGMENT_RE, (m, seg) => (isIdLike(seg) ? '/:hash' : m));
+}
+
+// Same rule as blackbox.js _sanitizeHash/_stripQueryParams: keep hash routes
+// ('#/route', '#section'), cut a query inside the hash ('#/reset?token=x' →
+// '#/reset'), and drop key=value fragments ('#access_token=...') entirely.
 function stripQueryParams(path) {
   if (!path) return '';
   try {
-    const qIndex = path.indexOf('?');
-    if (qIndex === -1) return path;
     const hashIndex = path.indexOf('#');
-    if (hashIndex !== -1 && hashIndex < qIndex) return path;
-    const base = path.substring(0, qIndex);
-    const hash = hashIndex > qIndex ? path.substring(hashIndex) : '';
+    let base = hashIndex === -1 ? path : path.substring(0, hashIndex);
+    let hash = hashIndex === -1 ? '' : path.substring(hashIndex);
+    const qIndex = base.indexOf('?');
+    if (qIndex !== -1) base = base.substring(0, qIndex);
+    const hashQIndex = hash.indexOf('?');
+    if (hashQIndex !== -1) hash = hash.substring(0, hashQIndex);
+    if (hash.includes('=')) hash = '';
     return base + hash;
   } catch {
     return path;
@@ -68,7 +102,7 @@ function normalizePath(path) {
   // Replace numeric path segments with :num
   normalized = normalized.replace(NUMERIC_ID_RE, '/:num');
   // Replace long hash-like segments (R2/S3 keys, Firestore doc IDs)
-  normalized = normalized.replace(HASH_SEGMENT_RE, '/:hash');
+  normalized = replaceHashSegments(normalized);
   return normalized;
 }
 
@@ -91,7 +125,7 @@ function normalizeMessageUrls(message) {
       path = path.replace(CDN_CGI_PREFIX_RE, '');
       path = path.replace(UUID_RE, ':id');
       path = path.replace(NUMERIC_ID_RE, '/:num');
-      path = path.replace(HASH_SEGMENT_RE, '/:hash');
+      path = replaceHashSegments(path);
       // Collapse the filename for CDN URLs (the specific file doesn't matter for grouping)
       path = path.replace(/\/[^/]+\.[a-z]{2,5}$/i, '/*');
       return u.hostname + path;
@@ -107,13 +141,16 @@ function normalizeMessageUrls(message) {
  */
 function normalizeMessage(message) {
   if (!message) return '';
-  let normalized = message.slice(0, 100);
+  // Normalize BEFORE truncating: cutting first leaves partial UUIDs / URLs
+  // that the replacements below no longer match (ADR-0008). The 1000-char
+  // pre-slice only bounds regex cost.
+  let normalized = message.slice(0, 1000);
 
   // Normalize embedded URLs
   normalized = normalizeMessageUrls(normalized);
 
   // Replace Firestore document paths: "catalogItems/XkgAOIE34NXD5vNMG7ud" → "catalogItems/:docId"
-  normalized = normalized.replace(FIRESTORE_DOC_PATH_RE, '$1/:docId');
+  normalized = normalized.replace(FIRESTORE_DOC_PATH_RE, (m, coll, id) => (isIdLike(id) ? `${coll}/:docId` : m));
 
   // Replace ISO timestamps
   normalized = normalized.replace(ISO_TIMESTAMP_RE, ':timestamp');
@@ -121,29 +158,47 @@ function normalizeMessage(message) {
   // Replace UUIDs in message text
   normalized = normalized.replace(UUID_RE, ':id');
 
-  // Strip trailing numeric identifiers (#5, #12, etc.)
-  normalized = normalized.replace(TRAILING_NUMBER_RE, '');
+  // Strip trailing numeric identifiers (#5, #12, etc.), keeping HTTP statuses
+  normalized = normalized.replace(TRAILING_NUMBER_RE, (m, n) => (+n >= 100 && +n <= 599 ? m : ''));
 
-  return normalized;
+  return normalized.slice(0, 200);
 }
 
+// Returns the raw first app frame (line:col and origin intact) — it is also
+// surfaced as context.callerFrame (ADR-0016), where line numbers matter.
+// Fingerprinting normalizes it separately via normalizeFrameForFingerprint.
 export function extractTopAppFrame(stack) {
   if (!stack) return '';
   const lines = stack.split('\n');
   for (const line of lines) {
     const trimmed = line.trim();
     // Skip empty lines and the error message line
-    if (!trimmed || !trimmed.includes('at ')) continue;
+    if (!trimmed || !STACK_FRAME_RE.test(trimmed)) continue;
     // Skip framework/bundler/blackbox frames
     if (SKIP_FRAMES_RE.test(trimmed)) continue;
-    // Normalize chunk/module filenames that change across deploys
-    let normalized = trimmed;
-    normalized = normalized.replace(CHUNK_FILENAME_RE, 'chunk-:hash.$1');
-    normalized = normalized.replace(BUNDLE_HASH_RE, ':hash.bundle.$1');
-    normalized = normalized.replace(TURBOPACK_MODULE_RE, '_:hash._.$1');
-    return normalized;
+    return trimmed;
   }
   return '';
+}
+
+/**
+ * Reduce a frame to function name + module path so the fingerprint survives
+ * edits above the throw site, port changes and deploys (ADR-0019 point 3):
+ * strips :line:col and scheme://host:port, replaces content hashes in chunk
+ * filenames, and collapses minified 1-2 char function names to `?`.
+ */
+function normalizeFrameForFingerprint(frame) {
+  if (!frame) return '';
+  let normalized = frame;
+  normalized = normalized.replace(/:\d+(?::\d+)?(?=\)?$)/, '');
+  normalized = normalized.replace(/[a-z][a-z0-9+.-]*:\/\/[^/\s)]*/gi, '');
+  normalized = normalized.replace(CHUNK_FILENAME_RE, 'chunk-:hash.$1');
+  normalized = normalized.replace(BUNDLE_HASH_RE, ':hash.bundle.$1');
+  normalized = normalized.replace(TURBOPACK_MODULE_RE, '_:hash._.$1');
+  normalized = normalized.replace(DASH_HASH_RE, (m, h, ext) => (/\d|[A-Z]/.test(h) ? `-:hash.${ext}` : m));
+  normalized = normalized.replace(BARE_HASH_FILE_RE, '/:hash.$1');
+  normalized = normalized.replace(/^(at (?:async )?)?[\w$]{1,2}(?= \(|@)/, '$1?');
+  return normalized;
 }
 
 /**
@@ -189,7 +244,7 @@ export function isStackEntirelyInternal(stack) {
   let frameCount = 0;
   for (const line of lines) {
     const trimmed = line.trim();
-    if (!trimmed || !trimmed.includes('at ')) continue;
+    if (!trimmed || !STACK_FRAME_RE.test(trimmed)) continue;
     frameCount++;
     if (!INTERNAL_ONLY_FRAMES_RE.test(trimmed)) {
       // Found at least one frame that looks like app code — not internal.
@@ -215,7 +270,7 @@ export function generateFingerprint(message, source, path, stack) {
   // resource_load synthesizes an empty stack.
   const isResourceLoad = source === 'resource_load';
   const fpPath = isResourceLoad ? '' : normalizedPath;
-  const fpFrame = isResourceLoad ? '' : topFrame;
+  const fpFrame = isResourceLoad ? '' : normalizeFrameForFingerprint(topFrame);
 
   const input = `${truncatedMessage}|${source || ''}|${fpPath}|${fpFrame}`;
   const fingerprint = hashString(input);

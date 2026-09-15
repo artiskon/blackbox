@@ -6,8 +6,9 @@ import {
   getFirestoreFunctions,
   getPersistenceConfig,
   initPersistence,
-  isCircuitOpen
-} from "./chunk-W2CFSJ2O.js";
+  isCircuitOpen,
+  toFirestoreSafe
+} from "./chunk-3QPKAOHJ.js";
 export {
   _resetPersistence,
   _setCollectionRef,
@@ -16,5 +17,6 @@ export {
   getFirestoreFunctions,
   getPersistenceConfig,
   initPersistence,
-  isCircuitOpen
+  isCircuitOpen,
+  toFirestoreSafe
 };

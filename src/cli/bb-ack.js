@@ -17,32 +17,37 @@
 
 import { connectToFirestore } from './shared/firebase-connect.js';
 import { collection, query, where, getDocs, updateDoc, doc as docRef, deleteField } from 'firebase/firestore';
+import { parseCliArgs, parseDuration } from './shared/utils.js';
+
+const USAGE = `Usage: bb-ack <fingerprint> [--for 7d] [--comment "text"]
+       bb-ack <fingerprint> --clear
+       bb-ack --list
+  --for <duration>          Mute window: 30s, 5m, 2h, 7d or forever (default 7d)
+  --comment <text>          Why it's muted
+  --clear                   Remove the mute
+  --list                    List currently-muted fingerprints
+  -h, --help                Show this help
+Both --flag value and --flag=value work.`;
 
 function parseArgs() {
-  const args = process.argv.slice(2);
-  const out = { fingerprint: null, forStr: '7d', comment: '', clear: false, list: false };
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === '--list') out.list = true;
-    else if (a === '--clear') out.clear = true;
-    else if (a === '--for' && args[i + 1]) { out.forStr = args[++i]; }
-    else if (a.startsWith('--for=')) { out.forStr = a.slice(6); }
-    else if (a === '--comment' && args[i + 1]) { out.comment = args[++i]; }
-    else if (a.startsWith('--comment=')) { out.comment = a.slice(10); }
-    else if (!a.startsWith('--') && !out.fingerprint) { out.fingerprint = a; }
-  }
-  return out;
+  const { flags, positionals } = parseCliArgs({
+    '--list': 'bool',
+    '--clear': 'bool',
+    '--for': 'string',
+    '--comment': 'string',
+  }, USAGE, { maxPositionals: 1 });
+  return {
+    fingerprint: positionals[0] ?? null,
+    forStr: flags.for ?? '7d',
+    comment: flags.comment ?? '',
+    clear: flags.clear === true,
+    list: flags.list === true,
+  };
 }
 
-function parseDuration(s) {
-  if (!s) return null;
+function parseAckDuration(s) {
   if (s === 'forever') return 365 * 24 * 60 * 60 * 1000 * 100; // 100 years
-  const m = String(s).trim().toLowerCase().match(/^(\d+)([smhd])$/);
-  if (!m) return null;
-  const n = parseInt(m[1], 10);
-  const unit = m[2];
-  const mult = unit === 's' ? 1000 : unit === 'm' ? 60000 : unit === 'h' ? 3600000 : 86400000;
-  return n * mult;
+  return parseDuration(s);
 }
 
 async function findDocsByFingerprint(db, collectionName, isAdmin, fingerprint) {
@@ -80,6 +85,16 @@ async function listAcked(db, collectionName, isAdmin) {
 
 async function main() {
   const { fingerprint, forStr, comment, clear, list } = parseArgs();
+  if (!list && !fingerprint) {
+    console.error(USAGE);
+    process.exit(1);
+  }
+  // Validate before connecting so a bad --for never waits on Firestore.
+  const ms = parseAckDuration(forStr);
+  if (!ms) {
+    console.error(`Invalid --for duration: ${forStr}. Use 30s, 5m, 2h, 7d, or forever.`);
+    process.exit(1);
+  }
   const { db, collectionName, isAdmin } = await connectToFirestore();
 
   if (list) {
@@ -99,13 +114,6 @@ async function main() {
     }
     console.log('');
     process.exit(0);
-  }
-
-  if (!fingerprint) {
-    console.error('Usage: bb-ack <fingerprint> [--for 7d] [--comment "text"]');
-    console.error('       bb-ack <fingerprint> --clear');
-    console.error('       bb-ack --list');
-    process.exit(1);
   }
 
   const docs = await findDocsByFingerprint(db, collectionName, isAdmin, fingerprint);
@@ -132,11 +140,6 @@ async function main() {
     process.exit(0);
   }
 
-  const ms = parseDuration(forStr);
-  if (!ms) {
-    console.error(`Invalid --for duration: ${forStr}. Use 30s, 5m, 2h, 7d, or forever.`);
-    process.exit(1);
-  }
   const ackedUntil = new Date(Date.now() + ms);
 
   let updated = 0;

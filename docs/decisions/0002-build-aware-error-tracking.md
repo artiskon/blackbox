@@ -35,3 +35,4 @@ Every error doc's `metadata` carries `buildSha` and `nodeEnv`. Auto-detected at 
 ## Subsequent feedback
 
 - None directly contradicting. Multiple agents have positively cited the sessionInfo banner.
+- **2026-09-13 (unreleased, after v1.9.5; additive):** `metadata.buildSha` and `metadata.nodeEnv` are now refreshed on every recurrence (the update path writes them as field paths; the rest of the first-seen metadata is untouched), so they describe the MOST RECENT occurrence. Freezing the first-seen build made an error still firing on the current deploy look stale, which defeats this ADR's "fresh or fixed?" purpose. Detection also reads bare `process.env.*`, so bundler-inlined values work on Vite / webpack 5 / Rspack builds that define no `process` global (there `nodeEnv` used to stay null and the production auto-disable never fired), and a missing `buildSha` variable no longer skips `nodeEnv` detection.

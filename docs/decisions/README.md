@@ -75,6 +75,11 @@ Required sections:
 
 - [0029 — Minimal corner-flush launcher icon (idle dot, active square, pulse, right-click copy)](0029-minimal-launcher-icon.md)
 
+### Unreleased (after v1.9.5)
+
+- [0030 — Network body capture defaults and request-body redaction](0030-network-body-capture-defaults.md)
+- (also touches ADR-0001 / 0002 / 0003 / 0004 / 0005 / 0006 / 0007 / 0008 / 0009 / 0011 / 0013 / 0014 / 0016 / 0019 / 0021 / 0022 / 0023 / 0025 / 0029 — see the 2026-09-13 "Subsequent feedback" entries in each)
+
 ### Deferred (recurring asks we have NOT shipped)
 
 - [0017 — React fiber component lineage on resource_load](0017-deferred-react-fiber-component-lineage.md)

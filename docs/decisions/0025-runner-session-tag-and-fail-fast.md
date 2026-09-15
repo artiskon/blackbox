@@ -35,10 +35,12 @@ options bag or specific `window.__BB_*` globals (the latter set via
 - Trimmed and truncated to 64 chars.
 - Persisted as a top-level `sessionTag` field on every newly-created
   error doc (alongside `sessionId`, which is BB's own per-page-load id).
-- Persisted as `lastSeenSessionTag` on the doc-update path so a re-fire
-  of a fingerprint that already existed (from a previous session, perhaps
-  a real user) ALSO surfaces in the runner's
-  `where('lastSeenSessionTag', '==', tag) AND where('lastSeen', '>', t)` query.
+- Persisted as `lastSeenSessionTag` on both the create and update paths
+  (create path added 2026-09-13), so a re-fire of a fingerprint that
+  already existed (from a previous session, perhaps a real user) AND a
+  brand-new fingerprint both surface in the runner's
+  `where('lastSeenSessionTag', '==', tag)` query (optionally
+  `AND where('lastSeen', '>', t)`).
 
 ### `failFast` (boolean)
 
@@ -112,3 +114,4 @@ options bag or specific `window.__BB_*` globals (the latter set via
   (b) a runner-side request to dispatch the event on EVERY error, not
   just the first (would split into a separate `blackbox:error` event —
   the trip is intentionally one-shot).
+- **2026-09-13 (unreleased, after v1.9.5; additive):** new error docs lacked `lastSeenSessionTag`, so the documented "also catch re-fires" query (`lastSeenSessionTag == tag`) missed fingerprints first created during the run, and a runner had to OR two queries. The create path now writes it too (Decision bullet amended); `sessionTag == tag` still means "first created in this run". Same trap, other tool: `bb-health` and the panel's Health tab windowed on `createdAt`, hiding recurring errors first seen more than 24h ago; they now window on `lastSeen` (served by the `type ASC + lastSeen DESC` index), and `bb-timeline` and the panel's History timeline (`queryTimeline`) also pull errors by `lastSeen`.

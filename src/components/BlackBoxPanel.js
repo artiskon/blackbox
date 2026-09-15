@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import blackbox from '../core/blackbox.js';
+import { isIdLike } from '../core/fingerprint.js';
 
 function timeAgo(isoString) {
   if (!isoString) return '';
@@ -38,6 +39,9 @@ const breadcrumbLabel = {
   console: 'Console',
   'console.error': 'Console',
   'console.warn': 'Warning',
+  warning: 'Warning',
+  firebase: 'Firebase',
+  performance: 'Perf',
   form: 'Form',
   resource: 'Resource',
   system: 'System',
@@ -61,15 +65,76 @@ function shortenUrl(url, max = 60) {
 }
 
 function bcSummary(bc) {
-  if (bc.type === 'click') return `${bc.tag || 'element'}${bc.id ? '#' + bc.id : ''} "${(bc.text || '').slice(0, 25)}"`;
+  if (bc.type === 'click') return `${bc.tag || 'element'}${bc.id ? '#' + bc.id : ''} "${(bc.text || bc.autoLabel || '').slice(0, 25)}"`;
   if (bc.type === 'navigation') return `${bc.from || '?'} → ${bc.to || '?'}`;
   if (bc.type === 'network') return `${bc.method || 'GET'} ${shortenUrl(bc.url || '')} ${bc.status || ''}`;
   if (bc.type === 'error') return (bc.message || '').slice(0, 40);
   return bc.action || bc.message || bc.url || bc.to || bc.tag || '';
 }
 
+// The query* methods catch everything and return { connected: false, error }.
+// Surface that instead of rendering it as an empty result ("No saved errors").
+function queryErrorOf(result) {
+  if (result?.connected) return null;
+  return result?.error || 'Database query failed (persistence not initialized)';
+}
+
+// Same match as the action_url extraction in core/blackbox.js: the Firebase
+// console link Firestore puts in "requires an index" errors.
+const FIREBASE_CONSOLE_URL_RE = /https:\/\/console\.firebase\.google\.com[^\s"')]+/;
+
+function renderQueryError(msg) {
+  const url = (msg.match(FIREBASE_CONSOLE_URL_RE) || [])[0];
+  return (
+    <div style={{ padding: '8px 10px', borderRadius: '6px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#fca5a5', fontSize: '11px', whiteSpace: 'pre-wrap', wordBreak: 'break-word', userSelect: 'text', textAlign: 'left' }}>
+      <div style={{ color: '#ef4444', fontWeight: 'bold', marginBottom: '4px' }}>Query failed</div>
+      {msg}
+      {url && (
+        <div style={{ marginTop: '6px' }}>
+          <a href={url} target="_blank" rel="noopener noreferrer" style={{ color: '#a5b4fc', fontWeight: 600 }}>Create index ↗</a>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Stable per-entry key for live errors. Entries are long-lived objects in
+// core's _errors (dedup/diagnostics mutate them in place), so object identity
+// survives new errors, search and re-renders; list position does not.
+const _liveKeys = new WeakMap();
+let _liveKeySeq = 0;
+function liveErrorKey(err) {
+  let key = _liveKeys.get(err);
+  if (!key) {
+    key = `live-${++_liveKeySeq}`;
+    _liveKeys.set(err, key);
+  }
+  return key;
+}
+
+// Radix/shadcn modals set body pointer-events:none (inherited, so the launcher
+// and panel need an explicit 'auto') and listen on document for outside
+// presses (dismisses the dialog) and wheel/touchmove (scroll lock blocks the
+// panel list). Next's React root is `document` itself, where a plain
+// stopPropagation would still let those same-node listeners run, so stop
+// immediate propagation (React's root listener is registered first).
+function isolateFromHost(e) {
+  e.nativeEvent.stopImmediatePropagation();
+}
+
+// Drop underscore-prefixed ephemeral context keys (ADR-0021: _rawUrl, _rawSrc).
+// They're for in-process diagnostic matchers only; anything copied out of the
+// panel shouldn't leak signed-URL tokens.
+function stripEphemeral(context) {
+  const out = {};
+  for (const [k, v] of Object.entries(context)) {
+    if (!k.startsWith('_')) out[k] = v;
+  }
+  return out;
+}
+
 function errorToJSON(err) {
-  return JSON.stringify(err, null, 2);
+  return JSON.stringify(err.context ? { ...err, context: stripEphemeral(err.context) } : err, null, 2);
 }
 
 function errorToMarkdown(err) {
@@ -92,7 +157,19 @@ function errorToMarkdown(err) {
   return md;
 }
 
-const BREADCRUMB_FILTER_TYPES = ['click', 'network', 'error', 'navigation', 'performance', 'custom'];
+// ADR-0001 flag. Live entries carry `internal` (or legacy `_internal`).
+function isInternal(err) {
+  return err.internal === true || err._internal === true;
+}
+
+// Clickable controls are real <button>s so they're focusable and keyboard-
+// operable. Spread first: undo the UA button look so the existing inline
+// styles (spread after) render exactly as the old span/div did.
+const btnReset = {
+  background: 'none', border: 'none', margin: 0, padding: 0,
+  color: 'inherit', fontFamily: 'inherit', fontSize: 'inherit', lineHeight: 'inherit',
+};
+const rowBtnStyle = { ...btnReset, display: 'block', width: '100%', boxSizing: 'border-box', textAlign: 'left' };
 
 const tabStyle = (active, hovered) => ({
   padding: '6px 12px', cursor: 'pointer', fontSize: '11px', fontWeight: active ? 'bold' : 'normal',
@@ -121,6 +198,8 @@ const searchInputStyle = {
 };
 
 function BlackBoxPanel() {
+  // Starts false (matches the server render) and is set by refresh() on mount.
+  const [ready, setReady] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [tab, setTab] = useState('live');
@@ -134,6 +213,7 @@ function BlackBoxPanel() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [expandedHistory, setExpandedHistory] = useState(null);
+  const [historyError, setHistoryError] = useState(null);
 
   const [health, setHealth] = useState(null);
   const [healthLoading, setHealthLoading] = useState(false);
@@ -141,12 +221,15 @@ function BlackBoxPanel() {
   const [timeline, setTimeline] = useState([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [timelineLoaded, setTimelineLoaded] = useState(false);
+  const [timelineError, setTimelineError] = useState(null);
   const [timelineMinutes, setTimelineMinutes] = useState(10);
+  // Range the shown timeline was queried with (the select can change after).
+  const [timelineLoadedMinutes, setTimelineLoadedMinutes] = useState(null);
 
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [clearing, setClearing] = useState(false);
   const [clearSessionFeedback, setClearSessionFeedback] = useState(false);
-  const [deleteSuccess, setDeleteSuccess] = useState(false);
+  const [deleteMsg, setDeleteMsg] = useState(null); // { ok, text }
 
   // Feature 2D states
   const [searchQuery, setSearchQuery] = useState('');
@@ -155,7 +238,9 @@ function BlackBoxPanel() {
   // Launcher pulse on new error
   const [pulseKey, setPulseKey] = useState(0);
   const prevUniqueCountRef = useRef(0);
-  const [activeFilters, setActiveFilters] = useState(new Set(BREADCRUMB_FILTER_TYPES));
+  // Breadcrumb types the user switched off (chips are built per error from
+  // the types it actually has, so any type core emits can be hidden).
+  const [hiddenTypes, setHiddenTypes] = useState(new Set());
   const [reportCopied, setReportCopied] = useState(false);
   const [reportEmpty, setReportEmpty] = useState(false);
   const [reportText, setReportText] = useState(null);
@@ -213,6 +298,9 @@ function BlackBoxPanel() {
       if (bc.type === 'click') {
         out.el = `${bc.tag || 'element'}${bc.id ? '#' + bc.id : ''}${bc.dataBb ? '[data-bb=' + bc.dataBb + ']' : ''}`;
         if (bc.text) out.text = bc.text.slice(0, 30);
+        // ADR-0005: text stays canonical; the synthesized label (img alt,
+        // aria-label, ...) fills in under its own key so it reads as a guess.
+        else if (bc.autoLabel) out.label = bc.autoLabel.slice(0, 30);
       } else if (bc.type === 'navigation') {
         out.from = bc.from; out.to = bc.to;
       } else if (bc.type === 'network') {
@@ -242,12 +330,14 @@ function BlackBoxPanel() {
     // they're plausibly the same incident wrapped at multiple try/catch
     // layers. Three matching strategies, weakest to strongest:
     //   1. Exact-equality after stripping "Uncaught ErrorType:" prefix
-    //   2. Prefix containment (one's first 40 chars inside the other)
+    //   2. Prefix containment (one's first 40 chars inside the other; the
+    //      prefix must be ≥30 chars, same floor as tail, so "Failed" or ""
+    //      can't swallow unrelated errors — ADR-0023)
     //   3. Tail containment (one's last 80 chars inside the other) — catches
     //      cascades where each layer prepends its own prefix:
     //         "Save failed: Function updateDoc() called with invalid data..."
     //         "Error updating proposal: Function updateDoc() called with invalid data..."
-    //         "Firestore updateDoc failed: Function updateDoc() called with invalid data..."
+    //         "Firestore updateDoc failed on proposals: Function updateDoc() called with invalid data..."
     //      Prefix matching can't link these; the shared suffix can.
     // Time window widened from 50ms → 250ms because rethrows that bubble
     // through 2-3 service-layer try/catches can take 100ms+ on a slow render
@@ -263,6 +353,8 @@ function BlackBoxPanel() {
       return a.includes(tb) || b.includes(ta);
     }
     const grouped = new Map();
+    // ADR-0001 flag (isInternal, same check as the Live filter). A merged group
+    // stays internal only if every member is, so an app error is never hidden by it.
     for (const err of [...errors].reverse()) {
       const msg = (err.message || '').slice(0, 200);
       const msgNorm = stripUncaught(msg);
@@ -274,16 +366,19 @@ function BlackBoxPanel() {
         const tsMs = new Date(ts).getTime();
         for (const [, existing] of grouped) {
           const existingNorm = stripUncaught((existing.message || '').slice(0, 200));
-          const matched = (
+          const pa = existingNorm.slice(0, 40);
+          const pb = msgNorm.slice(0, 40);
+          const matched = msgNorm && existingNorm && (
             msgNorm === existingNorm ||
-            msgNorm.includes(existingNorm.slice(0, 40)) ||
-            existingNorm.includes(msgNorm.slice(0, 40)) ||
+            (pa.length >= 30 && msgNorm.includes(pa)) ||
+            (pb.length >= 30 && existingNorm.includes(pb)) ||
             tailMatch(msgNorm, existingNorm)
           );
           if (matched) {
             const existingTs = new Date(existing.timestamp || 0).getTime();
             if (Math.abs(tsMs - existingTs) < 250) {
               existing.count++;
+              if (!isInternal(err)) delete existing.internal;
               existing.sources = existing.sources || [existing.source];
               if (!existing.sources.includes(err.source)) existing.sources.push(err.source);
               merged = true;
@@ -294,7 +389,9 @@ function BlackBoxPanel() {
       }
       if (merged) continue;
       if (grouped.has(key)) {
-        grouped.get(key).count++;
+        const existing = grouped.get(key);
+        existing.count++;
+        if (!isInternal(err)) delete existing.internal;
         continue;
       }
       const entry = stripNulls({
@@ -303,6 +400,7 @@ function BlackBoxPanel() {
         // Surface the in-memory fingerprint so consumers can `bb-ack <fp>`
         // straight from the exported report without re-running bb-check.
         fingerprint: err._fingerprint || undefined,
+        internal: isInternal(err) || undefined,
         stack: cleanStack(err.stack),
         path: err.path || err.url,
         timestamp: err.metadata?.timestamp,
@@ -311,13 +409,8 @@ function BlackBoxPanel() {
       });
       if (err.context && Object.keys(err.context).length > 0) {
         // Strip underscore-prefixed ephemeral keys (per ADR-0021 — _rawUrl,
-        // _rawSrc etc.). They're for in-process diagnostic matchers only;
-        // the report goes to AI agents and shouldn't leak signed-URL tokens.
-        const ctx = {};
-        for (const [k, v] of Object.entries(err.context)) {
-          if (k.startsWith('_')) continue;
-          ctx[k] = v;
-        }
+        // _rawSrc etc.). The report goes to AI agents.
+        const ctx = stripEphemeral(err.context);
         // Keep responseBody and requestBody — they're often the single highest-
         // signal field for same-origin API errors (e.g. {error: 'URL not allowed'}
         // from an allowlist check tells you the cause instantly). Truncate to
@@ -382,14 +475,18 @@ function BlackBoxPanel() {
       // Group by normalized message+source instead of raw fingerprint
       // so old errors with fragmented fingerprints still merge correctly
       function normalizeHistoryKey(msg, source) {
-        let m = (msg || '').slice(0, 100).toLowerCase();
-        // Strip trailing numbers (#5, #12)
-        m = m.replace(/\s*[#(]\d+[)]?\s*$/, '');
+        // Normalize before truncating (as fingerprint.js does), so a cut
+        // doesn't leave partial URLs / IDs; the 1000-char slice bounds regex cost.
+        let m = (msg || '').slice(0, 1000);
         // Normalize URLs
         m = m.replace(/https?:\/\/[^\s"']+/g, '<url>');
-        // Normalize Firestore doc paths
-        m = m.replace(/\b([a-zA-Z_]\w*)\/([\w]{16,28})\b/g, '$1/:docId');
-        return `${source}:${m}`;
+        // Normalize Firestore doc paths, only for ID-shaped segments so
+        // camelCase names (users/createCheckoutSession) keep their identity.
+        // Runs before lowercasing: isIdLike's mixed-case and length rules need it.
+        m = m.replace(/\b([a-zA-Z_][a-zA-Z0-9_-]*)\/([\w-]{16,28})(?![\w-])/g, (x, coll, id) => (isIdLike(id) ? `${coll}/:docId` : x));
+        // Strip trailing counters (#5, (3)), keeping HTTP statuses (401) apart
+        m = m.replace(/\s*[#(](\d+)\)?\s*$/, (x, n) => (+n >= 100 && +n <= 599 ? x : ''));
+        return `${source}:${m.toLowerCase().slice(0, 100)}`;
       }
       const hGroups = new Map();
       for (const err of historyErrors) {
@@ -422,8 +519,14 @@ function BlackBoxPanel() {
   }
 
   const refresh = useCallback(() => {
+    // A session id exists only after init() actually enabled BB (not when
+    // disabled / production / never called). init's own 'system' breadcrumb
+    // notifies subscribers, so a panel mounted before init picks it up here.
+    setReady(!!blackbox.getSessionId());
     setErrorCount(blackbox.getErrorCount());
-    setErrors(blackbox.getRecentErrors(20));
+    // Whole core buffer (50): the list, badge, footer and copied report all
+    // read this, and a smaller window silently dropped the oldest errors.
+    setErrors(blackbox.getRecentErrors(50));
     setSilences(blackbox.getSuspiciousSilences());
   }, []);
 
@@ -435,14 +538,26 @@ function BlackBoxPanel() {
 
   useEffect(() => {
     function handleKey(e) {
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'B') {
+      if (!blackbox.getSessionId()) return; // BB not enabled: leave the browser shortcut alone
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.code === 'KeyB' || e.key?.toLowerCase() === 'b')) {
         e.preventDefault();
         setIsOpen(prev => !prev);
+        return;
+      }
+      // Escape peels one layer: report overlay, then delete confirm, then the
+      // panel. Only when focus is in the panel (or nowhere), so Escape meant
+      // for the host app's own modal/input doesn't also close BB.
+      if (e.key === 'Escape' && isOpen) {
+        const inPanel = e.target === document.body || e.target?.closest?.('[data-bb-panel]');
+        if (!inPanel) return;
+        if (reportText) setReportText(null);
+        else if (showClearConfirm) setShowClearConfirm(false);
+        else { setIsOpen(false); setIsExpanded(false); }
       }
     }
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, []);
+  }, [isOpen, reportText, showClearConfirm]);
 
   // Inject pulse keyframes once. CSS @keyframes can't live in inline style props.
   useEffect(() => {
@@ -458,6 +573,7 @@ function BlackBoxPanel() {
     setHistoryLoading(true);
     const result = await blackbox.queryPersistedErrors(50);
     setHistoryErrors(result.errors || []);
+    setHistoryError(queryErrorOf(result));
     setHistoryLoaded(true);
     setHistoryLoading(false);
   }
@@ -471,8 +587,11 @@ function BlackBoxPanel() {
 
   async function loadTimeline() {
     setTimelineLoading(true);
-    const result = await blackbox.queryTimeline(timelineMinutes);
+    const mins = timelineMinutes;
+    const result = await blackbox.queryTimeline(mins);
     setTimeline(result.events || []);
+    setTimelineError(queryErrorOf(result));
+    setTimelineLoadedMinutes(mins);
     setTimelineLoaded(true);
     setTimelineLoading(false);
   }
@@ -480,6 +599,7 @@ function BlackBoxPanel() {
   function handleClearSession() {
     blackbox.clearErrors();
     setExpandedError(null);
+    setExpandedStacks(new Set());
     setClearSessionFeedback(true);
     setTimeout(() => setClearSessionFeedback(false), 2000);
   }
@@ -489,15 +609,27 @@ function BlackBoxPanel() {
     const result = await blackbox.clearPersistedErrors();
     setClearing(false);
     setShowClearConfirm(false);
-    if (result.success) {
-      setHistoryErrors([]);
-      setHistoryLoaded(false);
-      setHealth(null);
-      setTimeline([]);
-      setTimelineLoaded(false);
-      setDeleteSuccess(true);
-      setTimeout(() => setDeleteSuccess(false), 3000);
+    // success alone isn't "all gone": core skips docs whose delete is denied
+    // (rules that allow read but not delete), so compare deleted with total.
+    const deleted = result.deleted || 0;
+    const { total } = result;
+    let msg;
+    if (!result.success && total === undefined) {
+      msg = { ok: false, text: `Delete failed: ${result.error || 'unknown error'}` };
+    } else if (total !== undefined && deleted < total) {
+      msg = { ok: false, text: `Deleted ${deleted} of ${total}. ${total - deleted} failed${result.error ? `: ${result.error}` : ''}` };
+    } else {
+      msg = { ok: true, text: `Deleted ${deleted} saved error${deleted !== 1 ? 's' : ''}.` };
     }
+    setDeleteMsg(msg);
+    setTimeout(() => setDeleteMsg(m => (m === msg ? null : m)), msg.ok ? 3000 : 10000);
+    setExpandedHistory(null);
+    setHealth(null);
+    setTimeline([]);
+    setTimelineLoaded(false);
+    setTimelineError(null);
+    // Re-query instead of blanking the list, so it shows what's really left.
+    loadHistory();
   }
 
   function toggleStack(key) {
@@ -510,7 +642,7 @@ function BlackBoxPanel() {
   }
 
   function toggleFilter(type) {
-    setActiveFilters(prev => {
+    setHiddenTypes(prev => {
       const next = new Set(prev);
       if (next.has(type)) next.delete(type);
       else next.add(type);
@@ -536,39 +668,51 @@ function BlackBoxPanel() {
   }
 
   function fallbackCopy(text) {
+    let ta;
     try {
-      const ta = document.createElement('textarea');
+      ta = document.createElement('textarea');
       ta.value = text;
       ta.style.cssText = 'position:fixed;left:-9999px';
       document.body.appendChild(ta);
       ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
-      return true;
+      // execCommand reports a blocked copy by returning false, not throwing.
+      return document.execCommand('copy') === true;
     } catch {
       return false;
+    } finally {
+      ta?.remove();
     }
   }
 
+  // Both clipboard methods blocked: fall back to the selectable text overlay
+  // instead of claiming "Copied".
   async function copyAsJSON(err, key) {
-    const ok = await copyToClipboard(errorToJSON(err));
+    const text = errorToJSON(err);
+    const ok = await copyToClipboard(text);
     if (ok) {
       setCopiedErrorKey(key + ':json');
       setTimeout(() => setCopiedErrorKey(null), 1500);
+    } else {
+      setReportText(text);
     }
   }
 
   async function copyAsMarkdown(err, key) {
-    const ok = await copyToClipboard(errorToMarkdown(err));
+    const text = errorToMarkdown(err);
+    const ok = await copyToClipboard(text);
     if (ok) {
       setCopiedErrorKey(key + ':md');
       setTimeout(() => setCopiedErrorKey(null), 1500);
+    } else {
+      setReportText(text);
     }
   }
 
   const hasSilences = silences.length > 0;
-  // Badge shows unique error count (deduplicated by source+message)
-  const uniqueKeys = new Set(errors.map(e => `${e.source}:${(e.message || '').slice(0, 80)}`));
+  // Badge shows unique error count (deduplicated by source+message). Excludes
+  // framework-internal errors, which the list hides by default (ADR-0001), so
+  // the badge never promises errors the panel doesn't show.
+  const uniqueKeys = new Set(errors.filter(e => !isInternal(e)).map(e => `${e.source}:${(e.message || '').slice(0, 80)}`));
   const uniqueCount = uniqueKeys.size;
   let badgeBg = '#22c55e';
   if (uniqueCount >= 6) badgeBg = '#ef4444';
@@ -577,24 +721,35 @@ function BlackBoxPanel() {
   const badgeText = uniqueCount > 99 ? '99+' : String(uniqueCount);
   const idle = uniqueCount === 0;
 
-  // Pulse a single ripple whenever the unique count increases.
+  // Pulse a single ripple whenever the unique count increases (ADR-0029).
+  // The launcher remounts on every panel close, so clear the pending ripple
+  // on open; otherwise it replays on close. Arrivals while open were already
+  // seen in the panel, so they don't ripple.
   useEffect(() => {
-    if (uniqueCount > prevUniqueCountRef.current) {
-      setPulseKey(k => k + 1);
-    }
+    if (isOpen) setPulseKey(0);
+    else if (uniqueCount > prevUniqueCountRef.current) setPulseKey(k => k + 1);
     prevUniqueCountRef.current = uniqueCount;
-  }, [uniqueCount]);
+  }, [uniqueCount, isOpen]);
+
+  // Render nothing (no launcher, no panel) until init() has enabled BB. After
+  // all hooks so hook order stays stable.
+  if (!ready) return null;
 
   if (!isOpen) {
     const size = idle ? 8 : 22;
     const borderRadius = idle ? '50%' : '3px';
+    const launcherLabel = idle ? 'BlackBox: no errors' : `BlackBox: ${badgeText} error${uniqueCount === 1 ? '' : 's'} — click to open`;
     return (
-      <div
+      <button
+        type="button"
         data-bb-panel
         onClick={() => setIsOpen(true)}
-        title={idle ? 'BlackBox: no errors' : `BlackBox: ${badgeText} error${uniqueCount === 1 ? '' : 's'} — click to open`}
+        onPointerDown={isolateFromHost}
+        title={launcherLabel}
+        aria-label={launcherLabel}
         style={{
-          position: 'fixed', bottom: 0, left: 0, zIndex: 99999,
+          ...btnReset,
+          position: 'fixed', bottom: 0, left: 0, zIndex: 99999, pointerEvents: 'auto',
           width: `${size}px`, height: `${size}px`, borderRadius,
           background: badgeBg, color: 'white',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -608,7 +763,7 @@ function BlackBoxPanel() {
           <span style={{ fontSize: uniqueCount > 99 ? '9px' : '12px', fontWeight: 'bold' }}>{badgeText}</span>
         )}
         {pulseKey > 0 && !idle && (
-          <div
+          <span
             key={pulseKey}
             style={{
               position: 'absolute', inset: 0, borderRadius: 'inherit',
@@ -619,9 +774,9 @@ function BlackBoxPanel() {
           />
         )}
         {hasSilences && !idle && (
-          <div style={{ position: 'absolute', top: '-3px', right: '-3px', width: '7px', height: '7px', borderRadius: '50%', background: '#facc15', border: '1px solid white' }} />
+          <span style={{ position: 'absolute', top: '-3px', right: '-3px', width: '7px', height: '7px', borderRadius: '50%', background: '#facc15', border: '1px solid white' }} />
         )}
-      </div>
+      </button>
     );
   }
 
@@ -630,7 +785,7 @@ function BlackBoxPanel() {
 
   const panelStyle = isExpanded
     ? {
-        position: 'fixed', top: '16px', right: '16px', bottom: '16px', left: '16px', zIndex: 99999,
+        position: 'fixed', top: '16px', right: '16px', bottom: '16px', left: '16px', zIndex: 99999, pointerEvents: 'auto',
         maxWidth: 'none', maxHeight: 'none',
         background: 'rgba(26, 26, 46, 0.97)', borderRadius: '12px',
         boxShadow: '0 4px 24px rgba(0,0,0,0.5)', color: '#e0e0e0',
@@ -638,7 +793,7 @@ function BlackBoxPanel() {
         fontSize: '12px', display: 'flex', flexDirection: 'column', overflow: 'hidden',
       }
     : {
-        position: 'fixed', bottom: '16px', right: '8px', zIndex: 99999,
+        position: 'fixed', bottom: '16px', right: '8px', zIndex: 99999, pointerEvents: 'auto',
         width: panelWidth, maxWidth: '400px', maxHeight: 'min(520px, calc(100vh - 32px))',
         background: 'rgba(26, 26, 46, 0.97)', borderRadius: '12px',
         boxShadow: '0 4px 24px rgba(0,0,0,0.5)', color: '#e0e0e0',
@@ -651,11 +806,47 @@ function BlackBoxPanel() {
     const stackKey = keyPrefix;
     const stackVisible = expandedStacks.has(stackKey);
     const allBreadcrumbs = err.breadcrumbs || [];
-    const filteredBreadcrumbs = allBreadcrumbs.filter(bc => activeFilters.has(bc.type) || !BREADCRUMB_FILTER_TYPES.includes(bc.type));
+    const breadcrumbTypes = [...new Set(allBreadcrumbs.map(bc => bc.type).filter(Boolean))].sort();
+    const filteredBreadcrumbs = allBreadcrumbs.filter(bc => !hiddenTypes.has(bc.type));
     const last5 = filteredBreadcrumbs.slice(-5);
+    const ctx = err.context || {};
+    const actionUrl = typeof ctx.action_url === 'string' && ctx.action_url.startsWith('https://') ? ctx.action_url : null;
+    // Remaining context as key/value rows. Underscore keys are ephemeral and
+    // can carry signed-URL tokens (ADR-0021); action_* are shown above.
+    const ctxEntries = Object.entries(ctx)
+      .filter(([k, v]) => !k.startsWith('_') && k !== 'action_hint' && k !== 'action_url' && v !== undefined && v !== null)
+      .map(([k, v]) => {
+        // captureError() context is app-supplied: guard circular/unserializable values
+        let s;
+        try { s = typeof v === 'string' ? v : JSON.stringify(v); } catch { /* circular */ }
+        if (typeof s !== 'string') s = String(v);
+        return [k, s.length > 400 ? s.slice(0, 400) + '…' : s];
+      });
+    const ctxKey = keyPrefix + ':ctx';
+    const ctxVisible = expandedStacks.has(ctxKey);
 
     return (
       <div style={{ padding: '6px 14px 10px 24px', background: 'rgba(0,0,0,0.2)', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+        {/* Full message (rows truncate it) */}
+        {err.message && (
+          <div style={{ fontSize: '11px', color: '#ddd', whiteSpace: 'pre-wrap', wordBreak: 'break-word', userSelect: 'text', marginBottom: '6px' }}>
+            {err.message}
+          </div>
+        )}
+
+        {/* Actionable hint + link extracted by core (ADR-0015) */}
+        {(ctx.action_hint || actionUrl) && (
+          <div style={{ fontSize: '11px', color: '#facc15', background: 'rgba(250,204,21,0.08)', borderRadius: '4px', padding: '4px 6px', marginBottom: '6px', wordBreak: 'break-word' }}>
+            {ctx.action_hint}
+            {actionUrl && (
+              <>
+                {ctx.action_hint ? ' ' : ''}
+                <a href={actionUrl} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ color: '#a5b4fc', fontWeight: 600 }}>Open ↗</a>
+              </>
+            )}
+          </div>
+        )}
+
         {/* Copy buttons */}
         <div style={{ display: 'flex', gap: '6px', marginBottom: '6px' }}>
           <button onClick={(e) => { e.stopPropagation(); copyAsJSON(err, keyPrefix); }} style={copyBtnStyle}>{copiedErrorKey === keyPrefix + ':json' ? '✓ Copied' : '📋 Copy JSON'}</button>
@@ -665,13 +856,15 @@ function BlackBoxPanel() {
         {/* Collapsible stack trace */}
         {err.stack && (
           <div style={{ marginBottom: '6px' }}>
-            <div
+            <button
+              type="button"
+              aria-expanded={stackVisible}
               onClick={(e) => { e.stopPropagation(); toggleStack(stackKey); }}
-              style={{ cursor: 'pointer', fontSize: '11px', color: '#a5b4fc', userSelect: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}
+              style={{ ...btnReset, cursor: 'pointer', fontSize: '11px', color: '#a5b4fc', userSelect: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}
             >
               <span>{stackVisible ? '▼' : '▶'}</span>
               <span>Stack</span>
-            </div>
+            </button>
             {stackVisible && (
               <pre style={{
                 fontFamily: 'ui-monospace, "Cascadia Code", "Fira Code", monospace',
@@ -685,15 +878,41 @@ function BlackBoxPanel() {
           </div>
         )}
 
+        {/* Collapsible context (urlReachability, responseBody, firstUndefinedPath, diagnostics, ...) */}
+        {ctxEntries.length > 0 && (
+          <div style={{ marginBottom: '6px' }}>
+            <button
+              type="button"
+              aria-expanded={ctxVisible}
+              onClick={(e) => { e.stopPropagation(); toggleStack(ctxKey); }}
+              style={{ ...btnReset, cursor: 'pointer', fontSize: '11px', color: '#a5b4fc', userSelect: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}
+            >
+              <span>{ctxVisible ? '▼' : '▶'}</span>
+              <span>Context ({ctxEntries.length})</span>
+            </button>
+            {ctxVisible && (
+              <div style={{ fontSize: '10px', background: 'rgba(0,0,0,0.4)', borderRadius: '6px', padding: '6px 8px', marginTop: '4px', userSelect: 'text' }}>
+                {ctxEntries.map(([k, s]) => (
+                  <div key={k} style={{ display: 'flex', gap: '6px', padding: '1px 0' }}>
+                    <span style={{ color: '#888', flexShrink: 0 }}>{k}:</span>
+                    <span style={{ color: '#bbb', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{s}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Breadcrumb filter chips */}
         {allBreadcrumbs.length > 0 && (
           <>
             <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '6px' }}>
-              {BREADCRUMB_FILTER_TYPES.map(type => (
+              {breadcrumbTypes.map(type => (
                 <button
                   key={type}
+                  aria-pressed={!hiddenTypes.has(type)}
                   onClick={(e) => { e.stopPropagation(); toggleFilter(type); }}
-                  style={filterChipStyle(activeFilters.has(type))}
+                  style={filterChipStyle(!hiddenTypes.has(type))}
                 >
                   {bcTypeLabel(type)}
                 </button>
@@ -714,39 +933,48 @@ function BlackBoxPanel() {
 
   function passesInternalFilter(err) {
     if (showInternal) return true;
-    return !(err.internal === true || err._internal === true);
+    return !isInternal(err);
   }
   const filteredLiveErrors = [...errors].reverse().filter(matchesSearch).filter(passesInternalFilter);
   const filteredHistoryErrors = historyErrors.filter(matchesSearch).filter(passesInternalFilter);
-  const hiddenInternalCount =
-    [...errors].filter(e => e.internal === true || e._internal === true).length +
-    historyErrors.filter(e => e.internal === true).length;
+  // Per tab: the banner describes the list it sits above (live and saved
+  // errors are different sets; Clear Session only clears live).
+  const internalCount =
+    tab === 'live' ? errors.filter(isInternal).length :
+    tab === 'history' ? historyErrors.filter(isInternal).length : 0;
+  // Why a list is empty when it has errors: the search, or the internal filter.
+  function emptyListText(total, noneText) {
+    if (total === 0) return noneText;
+    return searchQuery.trim() ? 'No matching errors' : 'Only framework-internal errors (hidden)';
+  }
 
   return (
     <>
       {/* Backdrop when expanded */}
       {isExpanded && (
         <div style={{
-          position: 'fixed', inset: 0, zIndex: 99998,
+          position: 'fixed', inset: 0, zIndex: 99998, pointerEvents: 'auto',
           background: 'rgba(0, 0, 0, 0.5)',
-        }} onClick={() => setIsExpanded(false)} />
+        }} onClick={() => setIsExpanded(false)} onPointerDown={isolateFromHost} />
       )}
 
-      <div data-bb-panel style={panelStyle}>
+      <div data-bb-panel role="dialog" aria-label="BlackBox error inspector" style={panelStyle} onPointerDown={isolateFromHost} onWheel={isolateFromHost} onTouchMove={isolateFromHost}>
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.1)', flexShrink: 0, gap: '8px' }}>
           {searchOpen ? (
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '6px' }}>
               <input
-                ref={el => el && el.focus()}
+                autoFocus
                 type="text"
                 placeholder="Search errors..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Escape') { setSearchOpen(false); setSearchQuery(''); } }}
+                aria-label="Search errors"
+                // stopPropagation: this Escape closes the search, not the panel
+                onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); setSearchOpen(false); setSearchQuery(''); } }}
                 style={{ ...searchInputStyle, margin: 0 }}
               />
-              <span onClick={() => { setSearchOpen(false); setSearchQuery(''); }} style={{ cursor: 'pointer', fontSize: '14px', color: '#999', padding: '4px', flexShrink: 0 }}>✕</span>
+              <button type="button" aria-label="Close search" onClick={() => { setSearchOpen(false); setSearchQuery(''); }} style={{ ...btnReset, cursor: 'pointer', fontSize: '14px', color: '#999', padding: '4px', flexShrink: 0 }}>✕</button>
             </div>
           ) : (
             <>
@@ -756,19 +984,19 @@ function BlackBoxPanel() {
               </span>
               <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
                 {/* Search toggle */}
-                <span onClick={() => setSearchOpen(true)} title="Search errors" style={{ cursor: 'pointer', fontSize: '13px', color: '#999', padding: '4px 8px', borderRadius: '4px', transition: 'color 0.15s' }}>
+                <button type="button" onClick={() => setSearchOpen(true)} title="Search errors" aria-label="Search errors" style={{ ...btnReset, cursor: 'pointer', fontSize: '13px', color: '#999', padding: '4px 8px', borderRadius: '4px', transition: 'color 0.15s' }}>
                   🔍
-                </span>
+                </button>
                 {/* Copy full report */}
-                <span onClick={copyFullReport} title="Copy full diagnostic report as JSON" style={{ cursor: 'pointer', fontSize: '13px', color: reportCopied ? '#22c55e' : reportEmpty ? '#f59e0b' : '#999', padding: '4px 8px', borderRadius: '4px', transition: 'color 0.15s' }}>
+                <button type="button" onClick={copyFullReport} title="Copy full diagnostic report as JSON" aria-label="Copy diagnostic report" style={{ ...btnReset, cursor: 'pointer', fontSize: '13px', color: reportCopied ? '#22c55e' : reportEmpty ? '#f59e0b' : '#999', padding: '4px 8px', borderRadius: '4px', transition: 'color 0.15s' }}>
                   {reportCopied ? '✓' : reportEmpty ? '∅' : '📋'}
-                </span>
+                </button>
                 {/* Expand/collapse toggle */}
-                <span onClick={() => setIsExpanded(prev => !prev)} style={{ cursor: 'pointer', fontSize: '16px', color: '#999', padding: '4px 8px', borderRadius: '4px' }}>
+                <button type="button" onClick={() => setIsExpanded(prev => !prev)} title={isExpanded ? 'Collapse panel' : 'Expand panel'} aria-label={isExpanded ? 'Collapse panel' : 'Expand panel'} style={{ ...btnReset, cursor: 'pointer', fontSize: '16px', color: '#999', padding: '4px 8px', borderRadius: '4px' }}>
                   {isExpanded ? '⤡' : '⤢'}
-                </span>
+                </button>
                 {/* Close button */}
-                <span onClick={() => { setIsOpen(false); setIsExpanded(false); }} style={{ cursor: 'pointer', fontSize: '16px', color: '#999', padding: '4px 8px', marginRight: '-8px', borderRadius: '4px' }}>✕</span>
+                <button type="button" onClick={() => { setIsOpen(false); setIsExpanded(false); }} title="Close" aria-label="Close BlackBox panel" style={{ ...btnReset, cursor: 'pointer', fontSize: '16px', color: '#999', padding: '4px 8px', marginRight: '-8px', borderRadius: '4px' }}>✕</button>
               </div>
             </>
           )}
@@ -793,9 +1021,9 @@ function BlackBoxPanel() {
           ))}
         </div>
 
-        {hiddenInternalCount > 0 && (tab === 'live' || tab === 'history') && (
+        {internalCount > 0 && (
           <div style={{ padding: '4px 14px', fontSize: '10px', color: '#888', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-            <span>{hiddenInternalCount} framework-internal error{hiddenInternalCount !== 1 ? 's' : ''} hidden</span>
+            <span>{internalCount} framework-internal error{internalCount !== 1 ? 's' : ''} {showInternal ? 'shown' : 'hidden'}</span>
             <button onClick={() => setShowInternal(s => !s)} style={filterChipStyle(showInternal)}>
               {showInternal ? 'Hide' : 'Show'}
             </button>
@@ -806,21 +1034,23 @@ function BlackBoxPanel() {
             <div>
               {filteredLiveErrors.length === 0 ? (
                 <div style={{ padding: '24px 14px', textAlign: 'center', color: '#22c55e' }}>
-                  {errors.length === 0 ? 'No errors captured' : 'No matching errors'}
+                  {emptyListText(errors.length, 'No errors captured')}
                 </div>
-              ) : filteredLiveErrors.map((err, i) => {
-                const errKey = `${err._fingerprint || 'fp'}:${err.metadata?.timestamp || ''}:${i}`;
+              ) : filteredLiveErrors.map((err) => {
+                const errKey = liveErrorKey(err);
                 const isExp = expandedError === errKey;
                 return (
                   <div key={errKey}>
-                    <div onClick={() => setExpandedError(isExp ? null : errKey)} style={{ padding: '8px 14px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.05)', background: isExp ? 'rgba(255,255,255,0.05)' : 'transparent' }}>
+                    <button type="button" aria-expanded={isExp} onClick={() => setExpandedError(isExp ? null : errKey)} style={{ ...rowBtnStyle, padding: '8px 14px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.05)', background: isExp ? 'rgba(255,255,255,0.05)' : 'transparent' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
                         <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '3px', background: sourceColor(err.source), color: 'white', fontWeight: 'bold', textTransform: 'uppercase', flexShrink: 0 }}>{err.source || 'error'}</span>
+                        {/* Storm-collapsed repeats (core stops adding rows past the threshold) */}
+                        {err._stormCount > 1 && <span title="Repeated in a rapid-fire storm" style={{ fontSize: '10px', padding: '1px 5px', borderRadius: '3px', background: 'rgba(255,255,255,0.15)', color: '#ccc', flexShrink: 0 }}>x{err._stormCount}</span>}
                         <span style={{ fontSize: '10px', opacity: 0.4, marginLeft: 'auto', flexShrink: 0 }}>{timeAgo(err.metadata?.timestamp)}</span>
                       </div>
-                      <div style={{ color: '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{(err.message || '').slice(0, 80)}</div>
-                    </div>
-                    {isExp && renderErrorDetail(err, `live-${i}`)}
+                      <div title={err.message} style={{ color: '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{(err.message || '').slice(0, 80)}</div>
+                    </button>
+                    {isExp && renderErrorDetail(err, errKey)}
                   </div>
                 );
               })}
@@ -875,35 +1105,41 @@ function BlackBoxPanel() {
                   </div>
 
 
-                  {/* Delete success feedback — M5 */}
-                  {deleteSuccess && (
-                    <div style={{ padding: '8px 14px', textAlign: 'center', color: '#22c55e', fontSize: '11px', background: 'rgba(34,197,94,0.1)' }}>
-                      All saved errors deleted successfully.
+                  {/* Delete All result feedback — M5 */}
+                  {deleteMsg && (
+                    <div style={{ padding: '8px 14px', textAlign: 'center', color: deleteMsg.ok ? '#22c55e' : '#fca5a5', fontSize: '11px', background: deleteMsg.ok ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)', wordBreak: 'break-word', userSelect: 'text' }}>
+                      {deleteMsg.text}
                     </div>
                   )}
 
+                  {historyError && <div style={{ padding: '8px 14px' }}>{renderQueryError(historyError)}</div>}
+
                   {filteredHistoryErrors.length === 0 && !timelineLoaded && timeline.length === 0 ? (
-                    <div style={{ padding: '24px 14px', textAlign: 'center', color: '#22c55e' }}>
-                      {historyErrors.length === 0 ? 'No saved errors' : 'No matching errors'}
-                    </div>
+                    !historyError && (
+                      <div style={{ padding: '24px 14px', textAlign: 'center', color: '#22c55e' }}>
+                        {emptyListText(historyErrors.length, 'No saved errors')}
+                      </div>
+                    )
                   ) : (
                     <>
                       {filteredHistoryErrors.length > 0 && (
                         <>
                           <div style={sectionTitle}>Saved Errors ({filteredHistoryErrors.length})</div>
                           {filteredHistoryErrors.map((err, i) => {
-                            const isExp = expandedHistory === i;
+                            // Firestore doc id: stable across Refresh (re-sorted) and search filtering
+                            const hKey = `history-${err.id || i}`;
+                            const isExp = expandedHistory === hKey;
                             return (
-                              <div key={i}>
-                                <div onClick={() => setExpandedHistory(isExp ? null : i)} style={{ padding: '8px 14px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.05)', background: isExp ? 'rgba(255,255,255,0.05)' : 'transparent' }}>
+                              <div key={hKey}>
+                                <button type="button" aria-expanded={isExp} onClick={() => setExpandedHistory(isExp ? null : hKey)} style={{ ...rowBtnStyle, padding: '8px 14px', cursor: 'pointer', borderBottom: '1px solid rgba(255,255,255,0.05)', background: isExp ? 'rgba(255,255,255,0.05)' : 'transparent' }}>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
                                     <span style={{ fontSize: '10px', padding: '1px 6px', borderRadius: '3px', background: sourceColor(err.source), color: 'white', fontWeight: 'bold', textTransform: 'uppercase', flexShrink: 0 }}>{err.source || 'error'}</span>
                                     {(err.occurrences || 1) > 1 && <span style={{ fontSize: '10px', padding: '1px 5px', borderRadius: '3px', background: 'rgba(255,255,255,0.15)', color: '#ccc', flexShrink: 0 }}>x{err.occurrences}</span>}
                                     <span style={{ fontSize: '10px', opacity: 0.4, marginLeft: 'auto', flexShrink: 0 }}>{timeAgo(err.lastSeen)}</span>
                                   </div>
-                                  <div style={{ color: '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{(err.message || '').slice(0, 80)}</div>
-                                </div>
-                                {isExp && renderErrorDetail(err, `history-${i}`)}
+                                  <div title={err.message} style={{ color: '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{(err.message || '').slice(0, 80)}</div>
+                                </button>
+                                {isExp && renderErrorDetail(err, hKey)}
                               </div>
                             );
                           })}
@@ -925,11 +1161,13 @@ function BlackBoxPanel() {
                         </>
                       )}
                       {/* M6: Timeline empty state after load */}
-                      {timelineLoaded && timeline.length === 0 && (
+                      {timelineLoaded && timeline.length === 0 && (timelineError ? (
+                        <div style={{ padding: '8px 14px' }}>{renderQueryError(timelineError)}</div>
+                      ) : (
                         <div style={{ padding: '12px 14px', textAlign: 'center', color: '#888', fontSize: '11px' }}>
-                          No activity recorded in the last {timelineMinutes} minutes.
+                          No activity recorded in the last {timelineLoadedMinutes} minutes.
                         </div>
-                      )}
+                      ))}
                     </>
                   )}
                 </>
@@ -951,17 +1189,24 @@ function BlackBoxPanel() {
                 <div style={{ textAlign: 'center', padding: '24px 0' }}>
                   <button onClick={loadHealth} style={loadBtn}>Check Health</button>
                 </div>
+              ) : queryErrorOf(health) ? (
+                <>
+                  {renderQueryError(queryErrorOf(health))}
+                  <div style={{ textAlign: 'center', marginTop: '12px' }}>
+                    <button onClick={loadHealth} style={{ ...loadBtn, padding: '4px 12px', fontSize: '11px' }}>Refresh</button>
+                  </div>
+                </>
               ) : (
                 <>
                   <div style={{ textAlign: 'center', padding: '16px 0', marginBottom: '12px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)' }}>
                     <div style={{ fontSize: '24px', fontWeight: 'bold', color: verdictColor(health.verdict) }}>{health.verdict}</div>
                     <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>Last 24 hours</div>
                   </div>
-                  {/* M3: "Systemic" → "Repeated 10+" */}
+                  {/* M3: "Systemic" → "Repeated 11+" (systemic = occurrences > 10) */}
                   <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
                     <div style={statBox()}><div style={{ fontSize: '20px', fontWeight: 'bold', color: '#ccc' }}>{health.uniqueErrors}</div><div style={{ fontSize: '10px', color: '#888' }}>Unique</div></div>
                     <div style={statBox()}><div style={{ fontSize: '20px', fontWeight: 'bold', color: '#ccc' }}>{health.totalOccurrences}</div><div style={{ fontSize: '10px', color: '#888' }}>Total</div></div>
-                    <div style={statBox()}><div style={{ fontSize: '20px', fontWeight: 'bold', color: '#ccc' }}>{health.systemicCount}</div><div style={{ fontSize: '10px', color: '#888' }}>Repeated 10+</div></div>
+                    <div style={statBox()}><div style={{ fontSize: '20px', fontWeight: 'bold', color: '#ccc' }}>{health.systemicCount}</div><div style={{ fontSize: '10px', color: '#888' }}>Repeated 11+</div></div>
                   </div>
                   {health.bySource && Object.keys(health.bySource).length > 0 && (
                     <>
@@ -1000,7 +1245,7 @@ function BlackBoxPanel() {
         {/* Footer */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 14px', borderTop: '1px solid rgba(255,255,255,0.1)', flexShrink: 0 }}>
           <span style={{ fontSize: '11px', opacity: 0.6 }}>
-            {tab === 'live' ? `${uniqueCount} error${uniqueCount !== 1 ? 's' : ''} this session` : tab === 'history' ? `${historyErrors.length} saved` : health ? health.verdict : 'Health'}
+            {tab === 'live' ? `${uniqueCount} unique${errorCount > uniqueCount ? ` · ${errorCount} total` : ` error${uniqueCount !== 1 ? 's' : ''}`} this session` : tab === 'history' ? `${filteredHistoryErrors.length} saved` : health?.verdict || 'Health'}
           </span>
           <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
             {/* M4: Clear session with feedback */}
@@ -1008,12 +1253,12 @@ function BlackBoxPanel() {
               clearSessionFeedback ? (
                 <span style={{ fontSize: '11px', color: '#22c55e', padding: '2px 8px' }}>Cleared!</span>
               ) : (
-                <span onClick={handleClearSession} style={{ cursor: 'pointer', fontSize: '11px', color: '#999', padding: '2px 8px', borderRadius: '3px', border: '1px solid rgba(255,255,255,0.15)' }}>Clear Session</span>
+                <button type="button" onClick={handleClearSession} style={{ ...btnReset, cursor: 'pointer', fontSize: '11px', color: '#999', padding: '2px 8px', borderRadius: '3px', border: '1px solid rgba(255,255,255,0.15)' }}>Clear Session</button>
               )
             )}
             {/* M5: Delete All always visible when connected */}
             {tab === 'history' && isConnected && (
-              <span onClick={() => setShowClearConfirm(true)} style={{ cursor: 'pointer', fontSize: '11px', color: '#ef4444', padding: '2px 8px', borderRadius: '3px', border: '1px solid rgba(239,68,68,0.3)' }}>Delete All</span>
+              <button type="button" onClick={() => setShowClearConfirm(true)} style={{ ...btnReset, cursor: 'pointer', fontSize: '11px', color: '#ef4444', padding: '2px 8px', borderRadius: '3px', border: '1px solid rgba(239,68,68,0.3)' }}>Delete All</button>
             )}
           </div>
         </div>
@@ -1032,7 +1277,7 @@ function BlackBoxPanel() {
           <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.95)', display: 'flex', flexDirection: 'column', borderRadius: '12px', padding: '12px', gap: '8px', zIndex: 10 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontSize: '12px', color: '#ccc', fontWeight: 'bold' }}>Select All + Copy (Ctrl+A, Ctrl+C)</span>
-              <span onClick={() => setReportText(null)} style={{ cursor: 'pointer', color: '#999', fontSize: '16px', padding: '2px 6px' }}>✕</span>
+              <button type="button" aria-label="Close report" onClick={() => setReportText(null)} style={{ ...btnReset, cursor: 'pointer', color: '#999', fontSize: '16px', padding: '2px 6px' }}>✕</button>
             </div>
             <textarea
               readOnly
@@ -1051,7 +1296,7 @@ function BlackBoxPanel() {
   );
 }
 
-// C2: No production guard — panel visibility controlled by `enabled` flag in blackbox.init()
+// Panel self-hides until blackbox.init() has actually enabled BB (disabled / production / not yet initialized).
 export default function BlackBoxPanelWrapper() {
   return <BlackBoxPanel />;
 }

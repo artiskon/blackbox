@@ -5,15 +5,17 @@ let _config = {};
 let _blackbox = null;
 let _failureCount = 0;
 let _circuitOpen = false;
-let _writingError = false;
 let _collectionRef = null;
 let _writeQueue = [];
 let _processing = false;
-let _fingerprintCache = new Map();
-let _firstWriteLogged = false; // fingerprint → docRef (avoids Firestore eventual consistency race)
+let _fingerprintCache = new Map(); // fingerprint → { ref, users: Set } for the doc this tab writes
+let _firstWriteLogged = false;
 let _stormTracker = new Map(); // fingerprint → { count, firstSeen, lastSeen }
 const STORM_WINDOW_MS = 5000; // 5-second window for detecting error storms
 const STORM_THRESHOLD = 5;    // 5+ occurrences in window = storm
+const MAX_QUEUE = 100;        // bounds memory while Firestore is slow/offline
+const WRITE_ACK_TIMEOUT_MS = 10000;
+let _ackTimeoutWarned = false;
 
 // Firestore SDK functions — resolved dynamically
 let _firestoreFns = null;
@@ -32,6 +34,7 @@ async function getFirestoreFns() {
       orderBy: mod.orderBy,
       limit: mod.limit,
       getDocs: mod.getDocs,
+      increment: mod.increment,
       serverTimestamp: mod.serverTimestamp,
       Timestamp: mod.Timestamp
     };
@@ -66,6 +69,20 @@ function stripEphemeralContextKeys(context) {
     out[k] = v;
   }
   return out;
+}
+
+// Firestore rejects undefined values and class instances (invalid-argument),
+// and one bad crumb in the breadcrumb snapshot would fail every error write.
+// JSON round-trip drops undefined keys, nulls undefined array items, and
+// flattens Dates/instances. Only apply to app-supplied parts of a doc, never
+// to SDK sentinels like serverTimestamp().
+export function toFirestoreSafe(value, fallback = null) {
+  if (value === undefined) return fallback;
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch {
+    return fallback;
+  }
 }
 
 function estimateDocBytes(doc) {
@@ -133,15 +150,23 @@ function isSafeEnvironment(config) {
 
   // Check NODE_ENV
   try {
-    if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'development') return true;
+    // Bare read so bundler-inlined NODE_ENV works without a `process` global
+    if (process.env.NODE_ENV === 'development') return true;
   } catch { /* ignore */ }
 
   return false;
 }
 
+function _enqueue(item) {
+  if (_writeQueue.length >= MAX_QUEUE) return;
+  _writeQueue.push(item);
+  if (!_processing) {
+    _processQueue();
+  }
+}
+
 function persistError(errorEntry) {
   if (_circuitOpen) return;
-  if (_writingError) return;
 
   // Error storm detection: collapse rapid-fire identical errors
   const { fingerprint } = generateFingerprint(
@@ -155,7 +180,7 @@ function persistError(errorEntry) {
   const storm = _stormTracker.get(fingerprint);
 
   if (storm) {
-    if (now - storm.firstSeen < STORM_WINDOW_MS) {
+    if (now - storm.firstSeen < STORM_WINDOW_MS && !storm.flushed) {
       // Within storm window — increment count, skip the write
       storm.count++;
       storm.lastSeen = now;
@@ -164,7 +189,22 @@ function persistError(errorEntry) {
         errorEntry._storm = { count: storm.count, windowMs: now - storm.firstSeen };
       }
       if (storm.count > STORM_THRESHOLD) {
-        // Already wrote the storm entry — just keep counting, don't persist
+        // Already wrote the storm entry — just keep counting, don't persist.
+        // The first suppressed hit schedules one update at window end that
+        // adds the suppressed hits to `occurrences`.
+        if (storm.count === STORM_THRESHOLD + 1) {
+          setTimeout(() => {
+            storm.flushed = true;
+            _enqueue({
+              _stormFlush: {
+                fingerprint,
+                extra: storm.count - STORM_THRESHOLD,
+                count: storm.count,
+                windowMs: storm.lastSeen - storm.firstSeen
+              }
+            });
+          }, Math.max(0, storm.firstSeen + STORM_WINDOW_MS - now));
+        }
         return;
       }
       // Below threshold — let it through normally
@@ -183,10 +223,25 @@ function persistError(errorEntry) {
     }
   }
 
-  _writeQueue.push(errorEntry);
-  if (!_processing) {
-    _processQueue();
-  }
+  _enqueue(errorEntry);
+}
+
+// Firestore write promises stay pending until the backend acks, so offline or
+// an emulator that isn't running would stall the queue forever with nothing
+// rejecting. Move on after a timeout; the SDK still delivers the write when
+// it reconnects.
+function _withAckTimeout(promise) {
+  let timer;
+  const timeout = new Promise(resolve => {
+    timer = setTimeout(() => {
+      if (!_ackTimeoutWarned) {
+        _ackTimeoutWarned = true;
+        console.warn(`[BlackBox] Firestore write not acknowledged after ${WRITE_ACK_TIMEOUT_MS / 1000}s; check network or that the Firestore emulator is running. Errors are still captured in the panel.`);
+      }
+      resolve();
+    }, WRITE_ACK_TIMEOUT_MS);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 async function _processQueue() {
@@ -194,13 +249,72 @@ async function _processQueue() {
   while (_writeQueue.length > 0) {
     if (_circuitOpen) { _writeQueue = []; break; }
     const entry = _writeQueue.shift();
-    await _doWrite(entry);
+    if (entry._stormFlush) {
+      await _withAckTimeout(_doStormFlush(entry._stormFlush));
+      continue;
+    }
+    // Let background registerDiagnostic probes settle (each is capped by its
+    // timeoutMs) so their results land in the persisted doc (ADR-0014).
+    if (entry._diagnosticsDone) {
+      try { await entry._diagnosticsDone; } catch { /* ignore */ }
+    }
+    await _withAckTimeout(_doWrite(entry));
   }
   _processing = false;
 }
 
+// Adds a storm's suppressed hits to the doc in one write and records the
+// real storm size.
+async function _doStormFlush({ fingerprint, extra, count, windowMs }) {
+  try {
+    const fns = await getFirestoreFns();
+    if (!fns || !_collectionRef) return;
+    const storm = { count, windowMs };
+    const cached = _fingerprintCache.get(fingerprint);
+    if (cached && fns.increment) {
+      await fns.updateDoc(cached.ref, { occurrences: fns.increment(extra), storm });
+    } else {
+      // Read and write the same doc, so a duplicate doc for this fingerprint
+      // can't lend it its count.
+      const snapshot = await fns.getDocs(fns.query(_collectionRef, fns.where('fingerprint', '==', fingerprint), fns.limit(1)));
+      const existing = snapshot.docs[0];
+      if (!existing) return;
+      await fns.updateDoc(existing.ref, {
+        occurrences: fns.increment ? fns.increment(extra) : (existing.data()?.occurrences || STORM_THRESHOLD) + extra,
+        storm
+      });
+    }
+    _failureCount = 0;
+  } catch (e) {
+    handleWriteFailure(e);
+  }
+}
+
+// Update-path fields shared by the cached-ref and existing-doc branches.
+function _commonUpdateFields(errorEntry) {
+  const fields = {
+    environment: errorEntry.environment ?? null,
+    breadcrumbs: toFirestoreSafe(errorEntry.breadcrumbs, [])
+  };
+  // Refresh the build on every recurrence so a live regression on the
+  // current deploy doesn't look stale (ADR-0002). Field paths leave the rest
+  // of the first-seen metadata alone; never write undefined.
+  if (errorEntry.metadata?.buildSha) fields['metadata.buildSha'] = errorEntry.metadata.buildSha;
+  if (errorEntry.metadata?.nodeEnv) fields['metadata.nodeEnv'] = errorEntry.metadata.nodeEnv;
+  const diagnostics = errorEntry.context?.diagnostics;
+  if (diagnostics && Object.keys(diagnostics).length > 0) {
+    // Field path so the rest of the stored context is left alone
+    fields['context.diagnostics'] = toFirestoreSafe(diagnostics, {});
+  }
+  return fields;
+}
+
 async function _doWrite(errorEntry) {
-  _writingError = true;
+  // Take the storm mark once. Past the threshold blackbox.js re-sends the
+  // same entry object, so a mark left on it would rewrite an old window's
+  // count over the full size a storm flush stored.
+  const stormMark = errorEntry._storm;
+  delete errorEntry._storm;
   try {
     const fns = await getFirestoreFns();
     // Wait for collection ref if not ready yet (async init race)
@@ -216,43 +330,39 @@ async function _doWrite(errorEntry) {
       errorEntry.stack
     );
 
-    // sessionTag is the runner-supplied correlation token. On the update
-    // path we set lastSeenSessionTag so a doc that fires during the runner's
-    // window — even if the doc was created in a previous (real-user)
-    // session — surfaces in the runner's `sessionTag == X AND lastSeen > t`
-    // query. The historical sessionTag on the doc itself is left alone.
+    // sessionTag is the runner-supplied correlation token. Both the create
+    // and update paths set lastSeenSessionTag, so every doc that fires during
+    // the runner's window (new, or created in an earlier real-user session)
+    // surfaces in the runner's `lastSeenSessionTag == X` query (optionally
+    // AND lastSeen > t). The historical sessionTag is only set on create.
     const sessionTag = errorEntry.sessionTag || _config.sessionTag || null;
 
-    // Deduplication: check local cache first (avoids Firestore eventual consistency race)
-    const cachedRef = _fingerprintCache.get(fingerprint);
-    if (cachedRef) {
+    const userKey = userKeyFor(errorEntry);
+
+    // Deduplication: the doc this tab already wrote is updated directly with
+    // increment(), with no query read, so concurrent tabs don't lose counts
+    // and a duplicate doc for the fingerprint can't lend it its count. A user
+    // not yet recorded on the doc by this tab, or caller firestoreFns without
+    // increment, takes the query path, which owns the capped uniqueUsers logic.
+    const cached = _fingerprintCache.get(fingerprint);
+    if (cached && fns.increment && (!userKey || cached.users.has(userKey))) {
       try {
-        const currentData = (await fns.getDocs(fns.query(_collectionRef, fns.where('fingerprint', '==', fingerprint), fns.limit(1)))).docs[0]?.data();
-        const stormCount = errorEntry._storm ? errorEntry._storm.count : 1;
         const updateData = {
-          occurrences: (currentData?.occurrences || 1) + stormCount,
+          occurrences: fns.increment(1),
           lastSeen: fns.serverTimestamp(),
           lastSeenSessionId: errorEntry.sessionId,
           ...(sessionTag ? { lastSeenSessionTag: sessionTag } : {}),
-          breadcrumbs: errorEntry.breadcrumbs || []
+          ..._commonUpdateFields(errorEntry)
         };
-        const userKey = userKeyFor(errorEntry);
-        if (userKey) {
-          const tracked = Array.isArray(currentData?.uniqueUsers) ? currentData.uniqueUsers : [];
-          if (!tracked.includes(userKey) && tracked.length < MAX_TRACKED_USERS) {
-            updateData.uniqueUsers = [...tracked, userKey];
-            updateData.uniqueUserCount = (currentData?.uniqueUserCount || tracked.length) + 1;
-          }
+        if (stormMark) {
+          updateData.storm = { count: stormMark.count, windowMs: stormMark.windowMs };
         }
-        if (errorEntry._storm) {
-          updateData.storm = { count: errorEntry._storm.count, windowMs: errorEntry._storm.windowMs };
-        }
-        await fns.updateDoc(cachedRef, updateData);
+        await fns.updateDoc(cached.ref, updateData);
         _failureCount = 0;
         return;
       } catch {
         _fingerprintCache.delete(fingerprint);
-        // Fall through to query
+        // Fall through to query (e.g. the doc was cleared)
       }
     }
 
@@ -275,15 +385,13 @@ async function _doWrite(errorEntry) {
     if (existingDoc) {
       try {
         const currentData = existingDoc.data();
-        const stormCount = errorEntry._storm ? errorEntry._storm.count : 1;
         const updateData = {
-          occurrences: (currentData.occurrences || 1) + stormCount,
+          occurrences: fns.increment ? fns.increment(1) : (currentData.occurrences || 1) + 1,
           lastSeen: fns.serverTimestamp(),
           lastSeenSessionId: errorEntry.sessionId,
           ...(sessionTag ? { lastSeenSessionTag: sessionTag } : {}),
-          breadcrumbs: errorEntry.breadcrumbs || []
+          ..._commonUpdateFields(errorEntry)
         };
-        const userKey = userKeyFor(errorEntry);
         if (userKey) {
           const tracked = Array.isArray(currentData.uniqueUsers) ? currentData.uniqueUsers : [];
           if (!tracked.includes(userKey) && tracked.length < MAX_TRACKED_USERS) {
@@ -291,11 +399,11 @@ async function _doWrite(errorEntry) {
             updateData.uniqueUserCount = (currentData.uniqueUserCount || tracked.length) + 1;
           }
         }
-        if (errorEntry._storm) {
-          updateData.storm = { count: errorEntry._storm.count, windowMs: errorEntry._storm.windowMs };
+        if (stormMark) {
+          updateData.storm = { count: stormMark.count, windowMs: stormMark.windowMs };
         }
         await fns.updateDoc(existingDoc.ref, updateData);
-        _fingerprintCache.set(fingerprint, existingDoc.ref);
+        _fingerprintCache.set(fingerprint, { ref: existingDoc.ref, users: new Set(userKey ? [userKey] : []) });
         _failureCount = 0;
         return;
       } catch (e) {
@@ -305,14 +413,13 @@ async function _doWrite(errorEntry) {
     }
 
     // Create new document
-    const userKey = userKeyFor(errorEntry);
     let doc = {
       schemaVersion: _config.schemaVersion,
       fingerprint,
       groupingInputs,
       sessionId: errorEntry.sessionId,
       lastSeenSessionId: errorEntry.sessionId,
-      ...(sessionTag ? { sessionTag } : {}),
+      ...(sessionTag ? { sessionTag, lastSeenSessionTag: sessionTag } : {}),
       type: 'error',
       message: errorEntry.message,
       stack: errorEntry.stack || '',
@@ -320,23 +427,26 @@ async function _doWrite(errorEntry) {
       ...(errorEntry.firedAs && errorEntry.firedAs.length > 1 ? { firedAs: errorEntry.firedAs } : {}),
       url: errorEntry.url,
       path: errorEntry.path,
-      breadcrumbs: errorEntry.breadcrumbs || [],
-      context: stripEphemeralContextKeys(errorEntry.context || {}),
-      metadata: errorEntry.metadata || {},
-      occurrences: errorEntry._storm ? errorEntry._storm.count : 1,
+      breadcrumbs: toFirestoreSafe(errorEntry.breadcrumbs, []),
+      context: toFirestoreSafe(stripEphemeralContextKeys(errorEntry.context || {}), {}),
+      metadata: toFirestoreSafe(errorEntry.metadata, {}),
+      environment: errorEntry.environment ?? null,
+      tags: toFirestoreSafe(errorEntry.tags, {}),
+      user: toFirestoreSafe(errorEntry.user, null),
+      occurrences: 1,
       ...(userKey ? { uniqueUsers: [userKey], uniqueUserCount: 1 } : {}),
       ...(errorEntry.internal ? { internal: true } : {}),
       firstSeen: fns.serverTimestamp(),
       lastSeen: fns.serverTimestamp(),
       createdAt: fns.serverTimestamp(),
-      ...(errorEntry._storm ? { storm: { count: errorEntry._storm.count, windowMs: errorEntry._storm.windowMs } } : {})
+      ...(stormMark ? { storm: { count: stormMark.count, windowMs: stormMark.windowMs } } : {})
     };
 
     doc = trimDocument(doc, _config.maxDocumentBytes);
 
     try {
       const docRef = await fns.addDoc(_collectionRef, doc);
-      _fingerprintCache.set(fingerprint, docRef);
+      _fingerprintCache.set(fingerprint, { ref: docRef, users: new Set(userKey ? [userKey] : []) });
       _failureCount = 0;
       if (!_firstWriteLogged) {
         _firstWriteLogged = true;
@@ -348,12 +458,13 @@ async function _doWrite(errorEntry) {
         console.error('[BlackBox] Firestore rules block writes to __blackbox. Add rules to allow read/write on the __blackbox collection.');
       }
     }
-  } catch { /* ignore top-level */ } finally {
-    _writingError = false;
-  }
+  } catch { /* ignore top-level */ }
 }
 
 function handleWriteFailure(e) {
+  // A single malformed payload is not a Firestore outage; don't let it
+  // disable persistence for the session.
+  if (e?.code === 'invalid-argument') return;
   _failureCount++;
   if (_failureCount >= _config.maxWriteFailures) {
     _circuitOpen = true;
@@ -368,7 +479,6 @@ export function initPersistence(blackbox, db, externalFns) {
     _config = blackbox._getConfig();
     _failureCount = 0;
     _circuitOpen = false;
-    _writingError = false;
 
     // Use externally provided Firestore functions if available
     // (avoids module duplication when BB is in a submodule with its own node_modules)
@@ -379,11 +489,13 @@ export function initPersistence(blackbox, db, externalFns) {
     // Production safety check
     if (!isSafeEnvironment(_config)) {
       try {
-        if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'production') {
+        // Bare `process.env.NODE_ENV` reads: Vite/webpack5/Rspack inline the
+        // literal but define no `process` global; the ReferenceError is caught.
+        if (process.env.NODE_ENV === 'production') {
           console.warn('[BlackBox] Persistence disabled in production.');
           return;
         }
-        if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV !== 'development') {
+        if (process.env.NODE_ENV !== 'development') {
           console.warn('[BlackBox] Persistence disabled: environment is not development and collection does not start with __.');
           return;
         }
@@ -430,7 +542,6 @@ export function _resetPersistence() {
   _blackbox = null;
   _failureCount = 0;
   _circuitOpen = false;
-  _writingError = false;
   _collectionRef = null;
   _firestoreFns = null;
   _writeQueue = [];
@@ -438,6 +549,7 @@ export function _resetPersistence() {
   _fingerprintCache = new Map();
   _firstWriteLogged = false;
   _stormTracker = new Map();
+  _ackTimeoutWarned = false;
 }
 
 export function _setFirestoreFns(fns) {

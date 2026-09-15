@@ -10,8 +10,9 @@ import {
   getPersistenceConfig,
   initPersistence,
   isCircuitOpen,
-  isStackEntirelyInternal
-} from "./chunk-W2CFSJ2O.js";
+  isStackEntirelyInternal,
+  toFirestoreSafe
+} from "./chunk-3QPKAOHJ.js";
 
 // src/core/constants.js
 var DEFAULTS = {
@@ -46,6 +47,8 @@ var DEFAULTS = {
   networkExcludePatterns: [
     "firestore.googleapis.com",
     "identitytoolkit.googleapis.com",
+    "securetoken.googleapis.com",
+    // Firebase Auth token refresh
     "__nextjs_original-stack-frames",
     "hot-update"
   ],
@@ -137,9 +140,35 @@ function installErrorHook(blackbox2) {
   const rejectionHandler = (event) => {
     try {
       const reason = event.reason;
-      const message = (reason == null ? void 0 : reason.message) || String(reason);
-      const stack = (reason == null ? void 0 : reason.stack) || "";
-      blackbox2._recordError({ message, stack, source: "unhandled_promise", context: {} });
+      const isObject = reason !== null && typeof reason === "object";
+      const isResponse = isObject && typeof Response !== "undefined" && reason instanceof Response;
+      const context = {};
+      let message;
+      if (reason instanceof Error) {
+        message = reason.message || String(reason);
+      } else if (typeof (reason == null ? void 0 : reason.message) === "string" && reason.message) {
+        message = reason.message;
+      } else if (!isObject) {
+        message = String(reason);
+      } else if (isResponse) {
+        message = `HTTP ${reason.status} ${blackbox2._stripQueryParams(reason.url) || ""}`.trim();
+      } else if (typeof reason.error === "string" && reason.error) {
+        message = reason.error;
+      } else if (typeof reason.code === "string" && reason.code) {
+        message = reason.code;
+      } else {
+        try {
+          message = JSON.stringify(reason);
+        } catch (e) {
+        }
+        if (!message || message === "{}") message = Object.prototype.toString.call(reason);
+      }
+      if (!(reason instanceof Error)) context.reasonType = isResponse ? "Response" : reason === null ? "null" : typeof reason;
+      const isPrimitive = (v) => typeof v === "string" || typeof v === "number";
+      if (isObject && isPrimitive(reason.code)) context.code = reason.code;
+      if (isObject && isPrimitive(reason.status)) context.status = reason.status;
+      const stack = typeof (reason == null ? void 0 : reason.stack) === "string" ? reason.stack : "";
+      blackbox2._recordError({ message, stack, source: "unhandled_promise", context });
     } catch (e) {
     }
   };
@@ -154,8 +183,8 @@ function installErrorHook(blackbox2) {
 // src/core/hooks/clickHook.js
 function installClickHook(blackbox2) {
   const config = blackbox2._getConfig();
-  function synthesizeLabel(el) {
-    var _a, _b, _c, _d, _e, _f, _g;
+  function synthesizeLabel(el, editable) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
     if (!(el == null ? void 0 : el.getAttribute)) return null;
     const tag = el.tagName ? el.tagName.toLowerCase() : "";
     const aria = el.getAttribute("aria-label");
@@ -166,49 +195,63 @@ function installClickHook(blackbox2) {
       const alt = el.getAttribute("alt");
       if (alt) return alt.slice(0, 100);
     }
-    if (tag === "input") {
+    if (tag === "input" || tag === "textarea") {
       const placeholder = el.getAttribute("placeholder");
       if (placeholder) return `[${placeholder.slice(0, 50)}]`;
-      const value = el.value;
-      if (value) return value.slice(0, 50);
+      if (["submit", "button", "reset"].includes(el.type)) {
+        if (el.value) return el.value.slice(0, 50);
+      } else {
+        const labelText = (_c = (_b = (_a = el.labels) == null ? void 0 : _a[0]) == null ? void 0 : _b.textContent) == null ? void 0 : _c.trim();
+        if (labelText) return labelText.slice(0, 50);
+        const name = el.getAttribute("name");
+        if (name) return name.slice(0, 50);
+      }
     }
-    const parent = (_a = el.closest) == null ? void 0 : _a.call(el, 'button, a, [role="button"]');
+    const parent = (_d = el.closest) == null ? void 0 : _d.call(el, 'button, a, [role="button"]');
     if (parent && parent !== el) {
-      const parentText = (_c = (_b = parent.textContent) == null ? void 0 : _b.trim()) == null ? void 0 : _c.slice(0, 100);
+      const parentText = (_f = (_e = parent.textContent) == null ? void 0 : _e.trim()) == null ? void 0 : _f.slice(0, 100);
       if (parentText && parentText.length >= 2) return parentText;
-      const parentAria = (_d = parent.getAttribute) == null ? void 0 : _d.call(parent, "aria-label");
+      const parentAria = (_g = parent.getAttribute) == null ? void 0 : _g.call(parent, "aria-label");
       if (parentAria) return parentAria.slice(0, 100);
-      const parentTitle = (_e = parent.getAttribute) == null ? void 0 : _e.call(parent, "title");
+      const parentTitle = (_h = parent.getAttribute) == null ? void 0 : _h.call(parent, "title");
       if (parentTitle) return parentTitle.slice(0, 100);
     }
+    if (!editable && !((_i = el.textContent) == null ? void 0 : _i.trim())) {
+      const inner = (_j = el.querySelector) == null ? void 0 : _j.call(el, 'img[alt]:not([alt=""]), [aria-label]:not([aria-label=""]), svg title');
+      const innerLabel = inner && (inner.getAttribute("alt") || inner.getAttribute("aria-label") || inner.textContent || "").trim();
+      if (innerLabel) return innerLabel.slice(0, 100);
+    }
+    if (editable || ((_k = el.matches) == null ? void 0 : _k.call(el, 'button, a, [role="button"], input, textarea, select, [data-bb]'))) return null;
     const parentEl = el.parentElement;
     if (parentEl) {
-      const parentText = (_g = (_f = parentEl.textContent) == null ? void 0 : _f.trim()) == null ? void 0 : _g.slice(0, 30);
+      const parentText = (_m = (_l = parentEl.textContent) == null ? void 0 : _l.trim()) == null ? void 0 : _m.slice(0, 30);
       if (parentText && parentText.length >= 2) return parentText;
     }
     return null;
   }
   const handler = (event) => {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
     try {
       const target = event.target;
       if ((_a = target.closest) == null ? void 0 : _a.call(target, "[data-bb-panel]")) return;
       if ((_b = target.closest) == null ? void 0 : _b.call(target, "nextjs-portal, [data-nextjs-dialog-overlay], [data-nextjs-toast], [data-nextjs-error-overlay]")) return;
-      const el = target.closest ? target.closest('button, a, [role="button"], input[type="submit"], [data-bb]') || target : target;
+      const el = target.closest ? target.closest('button, a, [role="button"], input[type="submit"], [data-bb]') || target.namespaceURI === "http://www.w3.org/2000/svg" && target.closest("svg") || target : target;
       const tag = el.tagName ? el.tagName.toLowerCase() : "unknown";
-      const text = ((_d = (_c = el.textContent) == null ? void 0 : _c.trim()) == null ? void 0 : _d.slice(0, 100)) || "";
+      const editable = tag === "textarea" || !!((_c = target.closest) == null ? void 0 : _c.call(target, '[contenteditable]:not([contenteditable="false"])'));
+      const text = editable ? "" : ((_e = (_d = el.textContent) == null ? void 0 : _d.trim()) == null ? void 0 : _e.slice(0, 100)) || "";
       const id = el.id || null;
-      const className = ((_f = (_e = el.className) == null ? void 0 : _e.toString()) == null ? void 0 : _f.slice(0, config.maxClassNameLength)) || "";
+      const className = (((_f = el.getAttribute) == null ? void 0 : _f.call(el, "class")) || "").slice(0, config.maxClassNameLength);
       const dataBb = ((_g = el.dataset) == null ? void 0 : _g.bb) || null;
-      let href = el.href || null;
+      const rawHref = typeof el.href === "string" ? el.href : (_h = el.getAttribute) == null ? void 0 : _h.call(el, "href");
+      let href = rawHref || null;
       if (href) href = blackbox2._stripQueryParams(href);
-      const autoLabel = synthesizeLabel(el);
+      const autoLabel = synthesizeLabel(el, editable);
       blackbox2._addBreadcrumb("click", { tag, text, id, className, dataBb, href, autoLabel });
       const passiveInputTypes = ["text", "number", "email", "password", "tel", "search", "url", "date", "time", "datetime-local", "month", "week", "color", "range", "file"];
       const isPassiveInput = tag === "input" && passiveInputTypes.includes(el.type || "text");
-      const isInteractive = tag === "button" || tag === "input" && el.type === "submit" || ((_h = el.getAttribute) == null ? void 0 : _h.call(el, "role")) === "button" || tag === "a" && (!el.href || el.href === "#" || el.href.endsWith("#")) || !!dataBb && !isPassiveInput && tag !== "textarea";
+      const isInteractive = tag === "button" || tag === "input" && el.type === "submit" || ((_i = el.getAttribute) == null ? void 0 : _i.call(el, "role")) === "button" || tag === "a" && (!rawHref || rawHref === "#" || rawHref.endsWith("#")) || !!dataBb && !isPassiveInput && tag !== "textarea";
       if (isInteractive) {
-        blackbox2._registerSilenceCheck({ tag, text: autoLabel || text, id, dataBb });
+        blackbox2._registerSilenceCheck({ tag, text: text || autoLabel || "", id, dataBb });
       }
     } catch (e) {
     }
@@ -222,7 +265,9 @@ function installClickHook(blackbox2) {
 // src/core/hooks/navigationHook.js
 function installNavigationHook(blackbox2) {
   let previousPath = blackbox2._getCurrentPath();
+  let active = true;
   const recordNavigation = () => {
+    if (!active) return;
     try {
       const newPath = blackbox2._getCurrentPath();
       if (newPath !== previousPath) {
@@ -232,25 +277,28 @@ function installNavigationHook(blackbox2) {
     } catch (e) {
     }
   };
-  const originalPushState = history.pushState.bind(history);
-  const originalReplaceState = history.replaceState.bind(history);
-  history.pushState = function(...args) {
-    const result = originalPushState(...args);
+  const originalPushState = history.pushState;
+  const originalReplaceState = history.replaceState;
+  const patchedPushState = function(...args) {
+    const result = originalPushState.apply(history, args);
     recordNavigation();
     return result;
   };
-  history.replaceState = function(...args) {
-    const result = originalReplaceState(...args);
+  const patchedReplaceState = function(...args) {
+    const result = originalReplaceState.apply(history, args);
     recordNavigation();
     return result;
   };
+  history.pushState = patchedPushState;
+  history.replaceState = patchedReplaceState;
   const popstateHandler = () => {
     recordNavigation();
   };
   window.addEventListener("popstate", popstateHandler);
   return () => {
-    history.pushState = originalPushState;
-    history.replaceState = originalReplaceState;
+    active = false;
+    if (history.pushState === patchedPushState) history.pushState = originalPushState;
+    if (history.replaceState === patchedReplaceState) history.replaceState = originalReplaceState;
     window.removeEventListener("popstate", popstateHandler);
   };
 }
@@ -259,33 +307,25 @@ function installNavigationHook(blackbox2) {
 function installConsoleHook(blackbox2) {
   const config = blackbox2._getConfig();
   const ignorePatterns = config.consoleIgnorePatterns || [];
-  const nativeError = console.error;
-  const nativeWarn = console.warn;
   function interpolateFormatString(args) {
     if (args.length < 2 || typeof args[0] !== "string") return null;
     const fmt = args[0];
-    if (!/%[sdoOif%]/.test(fmt)) return null;
+    if (!/%[sdoOifc%]/.test(fmt)) return null;
     let i = 1;
-    const result = fmt.replace(/%([sdoOif%])/g, (match, type) => {
+    const result = fmt.replace(/%([sdoOifc%])/g, (match, type) => {
       if (type === "%") return "%";
       if (i >= args.length) return match;
       const val = args[i++];
-      if (type === "s") return String(val);
-      if (type === "d" || type === "i" || type === "f") return Number(val);
-      if (type === "o" || type === "O") {
-        try {
-          return JSON.stringify(val);
-        } catch (e) {
-          return String(val);
-        }
-      }
-      return String(val);
+      if (type === "c") return "";
+      if (type === "d" || type === "i") return String(parseInt(val, 10));
+      if (type === "f") return String(parseFloat(val));
+      return serializeArg(val);
     });
     const remaining = args.slice(i);
     if (remaining.length > 0) {
-      return (result + " " + remaining.map((a) => typeof a === "string" ? a : String(a)).join(" ")).slice(0, config.maxMessageLength);
+      return (result + " " + remaining.map(serializeArg).join(" ")).trim().slice(0, config.maxMessageLength);
     }
-    return result.slice(0, config.maxMessageLength);
+    return result.trim().slice(0, config.maxMessageLength);
   }
   function serializeArg(a) {
     if (typeof a === "string") return a;
@@ -353,27 +393,49 @@ function installConsoleHook(blackbox2) {
     }
   }
   const SENTINEL = "__bb_hooked";
+  let errorDepth = 0;
+  let warnDepth = 0;
+  let active = true;
+  const isActive = () => active;
+  let currentErrorWrapper = null, errorBelow = null;
+  let currentWarnWrapper = null, warnBelow = null;
   function patchError() {
-    if (console.error[SENTINEL]) return;
+    var _a, _b;
+    if ((_b = (_a = console.error).__bb_active) == null ? void 0 : _b.call(_a)) return;
     const thirdPartyWrapper = console.error;
     const wrapped = function(...args) {
-      thirdPartyWrapper.apply(console, args);
-      bbHandleError(...args);
+      if (!active) return thirdPartyWrapper.apply(console, args);
+      errorDepth++;
+      try {
+        thirdPartyWrapper.apply(console, args);
+      } finally {
+        errorDepth--;
+      }
+      if (errorDepth === 0) bbHandleError(...args);
     };
     wrapped[SENTINEL] = true;
-    wrapped.__bb_fn = bbHandleError;
-    console.error = wrapped;
+    wrapped.__bb_active = isActive;
+    errorBelow = thirdPartyWrapper;
+    console.error = currentErrorWrapper = wrapped;
   }
   function patchWarn() {
-    if (console.warn[SENTINEL]) return;
+    var _a, _b;
+    if ((_b = (_a = console.warn).__bb_active) == null ? void 0 : _b.call(_a)) return;
     const thirdPartyWrapper = console.warn;
     const wrapped = function(...args) {
-      thirdPartyWrapper.apply(console, args);
-      bbHandleWarn(...args);
+      if (!active) return thirdPartyWrapper.apply(console, args);
+      warnDepth++;
+      try {
+        thirdPartyWrapper.apply(console, args);
+      } finally {
+        warnDepth--;
+      }
+      if (warnDepth === 0) bbHandleWarn(...args);
     };
     wrapped[SENTINEL] = true;
-    wrapped.__bb_fn = bbHandleWarn;
-    console.warn = wrapped;
+    wrapped.__bb_active = isActive;
+    warnBelow = thirdPartyWrapper;
+    console.warn = currentWarnWrapper = wrapped;
   }
   patchError();
   patchWarn();
@@ -383,8 +445,9 @@ function installConsoleHook(blackbox2) {
   }, 2e3);
   return () => {
     clearInterval(repatchInterval);
-    console.error = nativeError;
-    console.warn = nativeWarn;
+    active = false;
+    if (console.error === currentErrorWrapper) console.error = errorBelow;
+    if (console.warn === currentWarnWrapper) console.warn = warnBelow;
   };
 }
 
@@ -424,149 +487,249 @@ function installNetworkHook(blackbox2) {
     }
     return null;
   }
-  let _bbRecording = false;
-  function createFetchWrapper(baseFetch) {
-    const wrapped = async function(input, init = {}) {
-      if (_bbRecording) {
-        return baseFetch(input, init);
+  async function readBodyPreview(res, maxChars, timeoutMs) {
+    var _a, _b;
+    let timer;
+    const timeout = new Promise((resolve) => {
+      timer = setTimeout(resolve, timeoutMs, null);
+    });
+    const reader = (_b = (_a = res.body) == null ? void 0 : _a.getReader) == null ? void 0 : _b.call(_a);
+    try {
+      if (!reader) return await Promise.race([res.text(), timeout]) || "";
+      const decoder = new TextDecoder();
+      let text = "";
+      while (text.length < maxChars) {
+        const chunk = await Promise.race([reader.read(), timeout]);
+        if (!chunk || chunk.done) break;
+        text += decoder.decode(chunk.value, { stream: true });
       }
-      const method = (init.method || "GET").toUpperCase();
-      let url = "";
-      let rawUrl = "";
-      let isSameOrigin = false;
+      return text;
+    } finally {
+      clearTimeout(timer);
       try {
-        rawUrl = typeof input === "string" ? input : (input == null ? void 0 : input.url) || String(input);
-        url = blackbox2._stripQueryParams(rawUrl);
-        if (url.length > config.maxUrlLength) url = url.slice(0, config.maxUrlLength);
-        if (rawUrl.length > config.maxUrlLength) rawUrl = rawUrl.slice(0, config.maxUrlLength);
-        if (typeof location !== "undefined") {
-          isSameOrigin = !url.startsWith("http") || url.startsWith(location.origin);
+        reader == null ? void 0 : reader.cancel().catch(() => {
+        });
+      } catch (e) {
+      }
+    }
+  }
+  const SECRET_KEY = '[^"=&]{0,40}(?:passw(?:or)?d|passcode|token|secret|authoriz|api[_-]?key)[^"=&]{0,40}';
+  const SECRET_JSON = new RegExp(`("${SECRET_KEY}"\\s*:\\s*)"(?:[^"\\\\]|\\\\.)*"`, "gi");
+  const SECRET_FORM = new RegExp(`((?:^|&)${SECRET_KEY}=)[^&]*`, "gi");
+  function redactBody(str) {
+    return /^\s*[[{]/.test(str) ? str.replace(SECRET_JSON, '$1"[redacted]"') : str.replace(SECRET_FORM, "$1[redacted]");
+  }
+  const BB_MARK = /* @__PURE__ */ Symbol.for("bb.fetch.recorded");
+  function markInit(init) {
+    const proto = init ? Object.getPrototypeOf(init) : Object.prototype;
+    return proto === Object.prototype || proto === null ? __spreadProps(__spreadValues({}, init), { [BB_MARK]: true }) : init;
+  }
+  function describeRequest(method, rawInput) {
+    const req = { method, url: "", rawUrl: "", isSameOrigin: false };
+    try {
+      req.rawUrl = String(rawInput);
+      req.url = blackbox2._stripQueryParams(req.rawUrl);
+      if (req.url.length > config.maxUrlLength) req.url = req.url.slice(0, config.maxUrlLength);
+      if (req.rawUrl.length > config.maxUrlLength) req.rawUrl = req.rawUrl.slice(0, config.maxUrlLength);
+      if (typeof location !== "undefined") {
+        req.isSameOrigin = new URL(req.rawUrl, location.href).origin === location.origin;
+      }
+    } catch (e) {
+    }
+    return req;
+  }
+  const PROBE_TIMEOUT_MS = 2e3;
+  function recordNetworkError(req, duration, errMsg, stack, aborted, reqHeaders) {
+    var _a;
+    const { method, url, rawUrl, isSameOrigin } = req;
+    const crumbData = __spreadValues({ method, url, status: 0, duration, ok: false, error: errMsg }, aborted ? { aborted: true } : {});
+    blackbox2._addBreadcrumb("network", crumbData);
+    if (aborted) return;
+    const errorContext = __spreadValues({ method, url, duration }, rawUrl !== url ? { _rawUrl: rawUrl } : {});
+    const record = () => blackbox2._recordError({
+      message: `Network error: ${method} ${url} - ${errMsg}`,
+      stack: stack || "",
+      source: "network",
+      context: errorContext
+    });
+    const probeFetch = (_a = blackbox2._getNativeFetch) == null ? void 0 : _a.call(blackbox2);
+    if (isSameOrigin || !probeFetch || !/^(https?:)?\/\//i.test(rawUrl)) {
+      record();
+      return;
+    }
+    const probeCtl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    let probeTimer;
+    let probeTimedOut = false;
+    Promise.race([
+      probeFetch(rawUrl, markInit({ method: "HEAD", mode: "no-cors", signal: probeCtl == null ? void 0 : probeCtl.signal })),
+      new Promise((_, reject) => {
+        probeTimer = setTimeout(() => {
+          probeTimedOut = true;
+          probeCtl == null ? void 0 : probeCtl.abort();
+          reject();
+        }, PROBE_TIMEOUT_MS);
+      })
+    ]).then(() => {
+      errorContext.urlReachability = "opaque_response";
+      errorContext.statusHint = "reachable_but_request_blocked_cors_likely_check_network_tab";
+      try {
+        const preflight = { method };
+        const SIMPLE_HEADERS = ["accept", "accept-language", "content-language", "content-type"];
+        const nonSimple = [];
+        if (reqHeaders) {
+          const entries = reqHeaders instanceof Headers ? [...reqHeaders.entries()] : Object.entries(reqHeaders);
+          for (const [k] of entries) {
+            if (!SIMPLE_HEADERS.includes(k.toLowerCase())) nonSimple.push(k);
+          }
+          const ct = (reqHeaders instanceof Headers ? reqHeaders.get("content-type") : reqHeaders["content-type"] || reqHeaders["Content-Type"]) || "";
+          if (ct && !ct.startsWith("application/x-www-form-urlencoded") && !ct.startsWith("multipart/form-data") && !ct.startsWith("text/plain")) {
+            nonSimple.push("content-type(" + ct.split(";")[0] + ")");
+          }
+        }
+        if (nonSimple.length > 0) preflight.headers = nonSimple;
+        if (!["GET", "HEAD", "POST"].includes(method)) {
+          preflight.reason = "non-simple method: " + method;
+        } else if (nonSimple.length > 0) {
+          preflight.reason = "non-simple headers: " + nonSimple.join(", ");
+        }
+        errorContext.preflight_if_cors = preflight;
+      } catch (e) {
+      }
+    }, () => {
+      if (probeTimedOut) {
+        errorContext.urlReachability = "unknown";
+        errorContext.statusHint = "probe_timed_out_origin_slow_or_hung";
+      } else {
+        errorContext.urlReachability = "unreachable_origin";
+        errorContext.statusHint = "origin_dns_or_refused";
+      }
+    }).then(() => {
+      clearTimeout(probeTimer);
+      try {
+        record();
+      } catch (e) {
+      }
+    });
+  }
+  function recordResponse(req, crumbData, isError, body, readErrorBody) {
+    const { method, url, rawUrl, isSameOrigin } = req;
+    const { status, duration, ok } = crumbData;
+    const bodyLimit = config.maxBodyLength > 0 ? config.maxBodyLength : 300;
+    const shouldCaptureReqBody = config.captureRequestBodies || isSameOrigin && ["POST", "PUT", "PATCH"].includes(method);
+    if (shouldCaptureReqBody) {
+      try {
+        if (body) {
+          const bodyStr = typeof body === "string" ? body : body instanceof FormData ? "[FormData: " + [...body.keys()].join(", ") + "]" : String(body);
+          crumbData.requestBody = redactBody(bodyStr).slice(0, bodyLimit);
         }
       } catch (e) {
       }
-      if (isExcludedUrl(url)) {
-        return baseFetch(input, init);
-      }
-      _bbRecording = true;
-      const start = Date.now();
-      let response;
-      blackbox2._incrementPendingFetches();
-      try {
-        response = await baseFetch(input, init);
-      } catch (err) {
-        blackbox2._decrementPendingFetches();
-        _bbRecording = false;
+    }
+    blackbox2._addBreadcrumb("network", crumbData);
+    if (isError) {
+      const maxBody = config.maxErrorBodyLength || 1024;
+      const errorContext = __spreadValues({ status, method, url, duration }, rawUrl !== url ? { _rawUrl: rawUrl } : {});
+      if (config.captureRequestBodies || isSameOrigin) {
         try {
-          const duration = Date.now() - start;
-          const errMsg = err.message || "";
-          const corsBlocked = /cors|blocked|cross.origin|not allowed by access/i.test(errMsg) || err.name === "TypeError" && errMsg === "Failed to fetch";
-          const crumbData = { method, url, status: 0, duration, ok: false, error: errMsg };
-          const errorContext = __spreadValues({ method, url, duration }, rawUrl !== url ? { _rawUrl: rawUrl } : {});
-          if (corsBlocked) {
-            crumbData.cors_blocked = true;
-            errorContext.cors_blocked = true;
-            errorContext.preflight_trigger_method = method;
-            try {
-              const SIMPLE_HEADERS = ["accept", "accept-language", "content-language", "content-type"];
-              const reqHeaders = init.headers;
-              const nonSimple = [];
-              if (reqHeaders) {
-                const entries = reqHeaders instanceof Headers ? [...reqHeaders.entries()] : Object.entries(reqHeaders);
-                for (const [k] of entries) {
-                  if (!SIMPLE_HEADERS.includes(k.toLowerCase())) nonSimple.push(k);
-                }
-                const ct = (reqHeaders instanceof Headers ? reqHeaders.get("content-type") : reqHeaders["content-type"] || reqHeaders["Content-Type"]) || "";
-                if (ct && !ct.startsWith("application/x-www-form-urlencoded") && !ct.startsWith("multipart/form-data") && !ct.startsWith("text/plain")) {
-                  nonSimple.push("content-type(" + ct.split(";")[0] + ")");
-                }
-              }
-              if (nonSimple.length > 0) errorContext.preflight_trigger_headers = nonSimple;
-              if (!["GET", "HEAD", "POST"].includes(method)) {
-                errorContext.preflight_reason = "non-simple method: " + method;
-              } else if (nonSimple.length > 0) {
-                errorContext.preflight_reason = "non-simple headers: " + nonSimple.join(", ");
-              }
-            } catch (e) {
-            }
+          if (body) {
+            const bodyStr = typeof body === "string" ? body : body instanceof FormData ? [...body.keys()].join(", ") : String(body);
+            errorContext.requestBody = redactBody(bodyStr).slice(0, maxBody);
           }
-          blackbox2._addBreadcrumb("network", crumbData);
-          blackbox2._recordError({
-            message: `Network error: ${method} ${url} - ${errMsg}`,
-            stack: err.stack || "",
-            source: "network",
-            context: errorContext
-          });
         } catch (e) {
         }
-        throw err;
       }
-      try {
-        const duration = Date.now() - start;
-        const status = response.status;
-        const ok = response.ok;
-        const crumbData = { method, url, status, duration, ok };
-        const bodyLimit = config.maxBodyLength > 0 ? config.maxBodyLength : 300;
-        const shouldCaptureReqBody = config.captureRequestBodies || isSameOrigin && ["POST", "PUT", "PATCH"].includes(method);
-        if (shouldCaptureReqBody) {
-          try {
-            if (init.body) {
-              const bodyStr = typeof init.body === "string" ? init.body : init.body instanceof FormData ? "[FormData: " + [...init.body.keys()].join(", ") + "]" : String(init.body);
-              crumbData.requestBody = bodyStr.slice(0, bodyLimit);
+      void (async () => {
+        try {
+          const text = await readErrorBody(Math.max(maxBody, 8192));
+          if (text) {
+            const classified = classifyHtmlErrorPage(text, status);
+            if (classified) {
+              errorContext.responseBody = `[${classified.summary}]`;
+              errorContext.responseBodyKind = classified.kind;
+            } else {
+              errorContext.responseBody = text.slice(0, maxBody);
             }
-          } catch (e) {
           }
+        } catch (e) {
         }
-        if (!ok) {
-          const maxBody = config.maxErrorBodyLength || 1024;
-          const errorContext = __spreadValues({ status, method, url, duration }, rawUrl !== url ? { _rawUrl: rawUrl } : {});
-          try {
-            if (init.body) {
-              const bodyStr = typeof init.body === "string" ? init.body : init.body instanceof FormData ? [...init.body.keys()].join(", ") : String(init.body);
-              errorContext.requestBody = bodyStr.slice(0, maxBody);
-            }
-          } catch (e) {
-          }
-          try {
-            const cloned = response.clone();
-            const text = await cloned.text();
-            if (text) {
-              const classified = classifyHtmlErrorPage(text, status);
-              if (classified) {
-                errorContext.responseBody = `[${classified.summary}]`;
-                errorContext.responseBodyKind = classified.kind;
-                crumbData.responseBody = `[${classified.summary}]`;
-              } else {
-                errorContext.responseBody = text.slice(0, maxBody);
-                crumbData.responseBody = text.slice(0, 200);
-              }
-            }
-          } catch (e) {
-          }
-          blackbox2._addBreadcrumb("network", crumbData);
+        try {
           blackbox2._recordError({
             message: `HTTP ${status}: ${method} ${url}`,
             stack: "",
             source: "network",
             context: errorContext
           });
-        } else {
-          blackbox2._addBreadcrumb("network", crumbData);
+        } catch (e) {
         }
-        const isFirstHit = !_firstSeenUrls.has(url);
-        if (isFirstHit) _firstSeenUrls.add(url);
-        if (ok && duration > config.slowRequestThreshold && !isFirstHit) {
-          blackbox2._addBreadcrumb("performance", {
-            action: "slow_request",
-            method,
-            url,
-            duration,
-            threshold: config.slowRequestThreshold
-          });
+      })();
+    }
+    const isFirstHit = !_firstSeenUrls.has(url);
+    if (isFirstHit) _firstSeenUrls.add(url);
+    if (ok && duration > config.slowRequestThreshold && !isFirstHit) {
+      blackbox2._addBreadcrumb("performance", {
+        action: "slow_request",
+        method,
+        url,
+        duration,
+        threshold: config.slowRequestThreshold
+      });
+    }
+  }
+  function createFetchWrapper(baseFetch) {
+    const wrapped = async function(input, init) {
+      var _a;
+      if (init && init[BB_MARK]) {
+        return baseFetch(input, init);
+      }
+      const opts = init || {};
+      const request = typeof Request !== "undefined" && input instanceof Request ? input : null;
+      const method = (opts.method || (request == null ? void 0 : request.method) || "GET").toUpperCase();
+      let rawInput = "";
+      try {
+        rawInput = typeof input === "string" ? input : (input == null ? void 0 : input.url) || String(input);
+      } catch (e) {
+      }
+      const req = describeRequest(method, rawInput);
+      if (isExcludedUrl(req.url)) {
+        return baseFetch(input, init);
+      }
+      const start = Date.now();
+      let response;
+      blackbox2._incrementPendingFetches();
+      try {
+        response = await baseFetch(input, markInit(init));
+      } catch (err) {
+        blackbox2._decrementPendingFetches();
+        try {
+          const signal = opts.signal || (input == null ? void 0 : input.signal);
+          const aborted = (err == null ? void 0 : err.name) === "AbortError" || !!(signal == null ? void 0 : signal.aborted) && (err == null ? void 0 : err.name) !== "TimeoutError";
+          recordNetworkError(req, Date.now() - start, (err == null ? void 0 : err.message) || "", err == null ? void 0 : err.stack, aborted, (_a = opts.headers) != null ? _a : request == null ? void 0 : request.headers);
+        } catch (e) {
         }
+        throw err;
+      }
+      try {
+        const crumbData = { method, url: req.url, status: response.status, duration: Date.now() - start, ok: response.ok };
+        const opaque = response.type === "opaque" || response.type === "opaqueredirect";
+        if (opaque) crumbData.responseType = response.type;
+        const isError = !response.ok && !opaque;
+        let cloned = null;
+        if (isError) {
+          try {
+            cloned = response.clone();
+          } catch (e) {
+          }
+        }
+        recordResponse(
+          req,
+          crumbData,
+          isError,
+          opts.body,
+          (maxChars) => cloned ? readBodyPreview(cloned, maxChars, 1500) : ""
+        );
       } catch (e) {
       }
       blackbox2._decrementPendingFetches();
-      _bbRecording = false;
       return response;
     };
     wrapped.__bb_hooked = true;
@@ -578,18 +741,82 @@ function installNetworkHook(blackbox2) {
   }
   patchFetch();
   const repatchInterval = setInterval(patchFetch, 2e3);
+  const xhrProto = typeof XMLHttpRequest !== "undefined" && !XMLHttpRequest.prototype.send.__bb_hooked ? XMLHttpRequest.prototype : null;
+  const nativeOpen = xhrProto == null ? void 0 : xhrProto.open;
+  const nativeSend = xhrProto == null ? void 0 : xhrProto.send;
+  const xhrRequests = /* @__PURE__ */ new WeakMap();
+  let xhrActive = true;
+  let patchedOpen = null, patchedSend = null;
+  if (xhrProto) {
+    xhrProto.open = patchedOpen = function(method, url) {
+      if (!xhrActive) return nativeOpen.apply(this, arguments);
+      try {
+        xhrRequests.set(this, describeRequest(String(method || "GET").toUpperCase(), url));
+      } catch (e) {
+      }
+      return nativeOpen.apply(this, arguments);
+    };
+    xhrProto.send = patchedSend = function(body) {
+      const req = xhrRequests.get(this);
+      if (!xhrActive || !req || isExcludedUrl(req.url)) return nativeSend.apply(this, arguments);
+      const xhr = this;
+      const start = Date.now();
+      const events = ["load", "error", "abort", "timeout", "loadend"];
+      let outcome = "error";
+      const onEvent = (e) => {
+        if (e.type !== "loadend") {
+          outcome = e.type;
+          return;
+        }
+        for (const type of events) xhr.removeEventListener(type, onEvent);
+        blackbox2._decrementPendingFetches();
+        if (xhrRequests.get(xhr) !== req) return;
+        try {
+          const duration = Date.now() - start;
+          if (outcome !== "load") {
+            recordNetworkError(req, duration, `XHR ${outcome}`, "", outcome === "abort", null);
+          } else {
+            const status = xhr.status;
+            const ok = status >= 200 && status < 300;
+            recordResponse(
+              req,
+              { method: req.method, url: req.url, status, duration, ok },
+              !ok,
+              body,
+              () => xhr.responseType === "" || xhr.responseType === "text" ? xhr.responseText : ""
+            );
+          }
+        } catch (e2) {
+        }
+      };
+      for (const type of events) xhr.addEventListener(type, onEvent);
+      blackbox2._incrementPendingFetches();
+      try {
+        return nativeSend.apply(this, arguments);
+      } catch (err) {
+        for (const type of events) xhr.removeEventListener(type, onEvent);
+        blackbox2._decrementPendingFetches();
+        throw err;
+      }
+    };
+    xhrProto.send.__bb_hooked = true;
+  }
   return () => {
     clearInterval(repatchInterval);
     window.fetch = nativeFetch;
+    xhrActive = false;
+    if (xhrProto) {
+      if (xhrProto.open === patchedOpen) xhrProto.open = nativeOpen;
+      if (xhrProto.send === patchedSend) xhrProto.send = nativeSend;
+    }
   };
 }
 
 // src/core/hooks/formHook.js
 function installFormHook(blackbox2) {
-  const handler = (event) => {
+  const report = (form, blocked) => {
     var _a;
     try {
-      const form = event.target;
       if (!form || ((_a = form.tagName) == null ? void 0 : _a.toLowerCase()) !== "form") return;
       const fields = form.elements ? Array.from(form.elements) : [];
       const invalidFields = [];
@@ -601,13 +828,16 @@ function installFormHook(blackbox2) {
           });
         }
       }
-      const crumb = {
+      const crumb = __spreadValues({
         action: "form_submit",
-        formId: form.id || form.name || "unknown_form",
+        // Attributes, not `form.id` / `form.name`: a control named "id" or
+        // "name" shadows those properties and would put a DOM node here,
+        // which Firestore rejects on every later write.
+        formId: form.getAttribute("id") || form.getAttribute("name") || "unknown_form",
         fieldCount: fields.filter((f) => f.name).length,
         invalidCount: invalidFields.length,
         invalidFields
-      };
+      }, blocked ? { blocked: true } : {});
       blackbox2._addBreadcrumb("form", crumb);
       if (invalidFields.length > 0) {
         blackbox2._recordError({
@@ -620,9 +850,53 @@ function installFormHook(blackbox2) {
     } catch (e) {
     }
   };
-  document.addEventListener("submit", handler, true);
+  const onSubmit = (event) => report(event.target, false);
+  const attempted = /* @__PURE__ */ new Set();
+  const markAttempt = (form) => {
+    if (!form || attempted.has(form)) return;
+    attempted.add(form);
+    setTimeout(() => attempted.delete(form), 0);
+  };
+  const onClick = (event) => {
+    var _a, _b;
+    try {
+      const el = (_b = (_a = event.target) == null ? void 0 : _a.closest) == null ? void 0 : _b.call(_a, "button, input");
+      if (el && (el.type === "submit" || el.type === "image")) markAttempt(el.form);
+    } catch (e) {
+    }
+  };
+  const onKey = (event) => {
+    var _a, _b;
+    try {
+      if (event.key === "Enter" && ((_a = event.target) == null ? void 0 : _a.tagName) !== "TEXTAREA") markAttempt((_b = event.target) == null ? void 0 : _b.form);
+    } catch (e) {
+    }
+  };
+  const pending = /* @__PURE__ */ new Set();
+  const onInvalid = (event) => {
+    var _a;
+    try {
+      const form = (_a = event.target) == null ? void 0 : _a.form;
+      if (!form || !attempted.has(form) || pending.has(form)) return;
+      pending.add(form);
+      setTimeout(() => {
+        pending.delete(form);
+        report(form, true);
+      }, 0);
+    } catch (e) {
+    }
+  };
+  document.addEventListener("submit", onSubmit, true);
+  document.addEventListener("invalid", onInvalid, true);
+  document.addEventListener("click", onClick, true);
+  document.addEventListener("keydown", onKey, true);
+  document.addEventListener("keypress", onKey, true);
   return () => {
-    document.removeEventListener("submit", handler, true);
+    document.removeEventListener("submit", onSubmit, true);
+    document.removeEventListener("invalid", onInvalid, true);
+    document.removeEventListener("click", onClick, true);
+    document.removeEventListener("keydown", onKey, true);
+    document.removeEventListener("keypress", onKey, true);
   };
 }
 
@@ -685,16 +959,31 @@ function installResourceHook(blackbox2) {
       if (target === window || !target.tagName) return;
       if (!resourceTags.has(target.tagName)) return;
       const tagName = target.tagName.toLowerCase();
-      const rawSrc = target.src || target.href || "";
+      const srcAttr = target.getAttribute(tagName === "link" ? "href" : "src");
+      const emptySrc = srcAttr !== null && srcAttr.trim() === "" && !target.getAttribute("srcset");
+      const rawSrc = emptySrc ? "" : target.currentSrc || target.src || target.href || "";
       const src = blackbox2._stripQueryParams(rawSrc);
-      const hostname = safeHostname(src);
-      const context = __spreadValues({
+      let upstreamSrc = null;
+      let viaPath = null;
+      try {
+        const wrapper = new URL(rawSrc);
+        const inner = wrapper.searchParams.get("url");
+        if (inner && /\/_(?:next|vercel)\/image$/.test(wrapper.pathname)) {
+          upstreamSrc = blackbox2._stripQueryParams(new URL(inner, wrapper.href).href);
+          viaPath = wrapper.pathname;
+        }
+      } catch (e) {
+      }
+      const hostname = safeHostname(upstreamSrc || src);
+      const context = __spreadValues(__spreadValues({
         tagName,
         src,
         hostname,
         id: target.id || null,
-        className: (((_a = target.className) == null ? void 0 : _a.toString()) || "").slice(0, 100)
-      }, rawSrc !== src ? { _rawSrc: rawSrc } : {});
+        // Attribute, not .className: on SVG <image>/<use> that's an
+        // SVGAnimatedString and would stringify to '[object SVGAnimatedString]'
+        className: (((_a = target.getAttribute) == null ? void 0 : _a.call(target, "class")) || "").slice(0, 100)
+      }, upstreamSrc ? { upstreamSrc } : {}), rawSrc !== src ? { _rawSrc: rawSrc } : {});
       let el = target;
       for (let i = 0; i < 5 && el; i++) {
         if ((_b = el.dataset) == null ? void 0 : _b.bb) {
@@ -714,17 +1003,23 @@ function installResourceHook(blackbox2) {
         }
       } catch (e) {
       }
+      const label = emptySrc ? "(empty src)" : upstreamSrc ? `${upstreamSrc} (via ${viaPath})` : src;
       const emit = (reachability, extra) => {
         context.urlReachability = reachability;
         if (extra) Object.assign(context, extra);
         blackbox2._recordError({
-          message: `Resource failed to load: ${tagName} - ${src}`,
+          message: `Resource failed to load: ${tagName} - ${label}`,
           stack: "",
           source: "resource_load",
           context
         });
       };
-      if (rawSrc && rawSrc.startsWith("http") && nativeFetch) {
+      if (emptySrc) {
+        emit("unknown", {
+          emptySrc: true,
+          action_hint: `<${tagName}> rendered with an empty src; the URL variable was empty/undefined at render time. Don't render the element until the URL exists instead of passing ''.`
+        });
+      } else if (rawSrc && rawSrc.startsWith("http") && nativeFetch) {
         nativeFetch(rawSrc, {
           method: "GET",
           mode: "cors",
@@ -782,6 +1077,7 @@ function installResourceHook(blackbox2) {
 var _blackbox = null;
 var _lastFlushTime = null;
 var _lastFlushIndex = 0;
+var PENDING_KEY = "__bb_pending_crumbs";
 function estimateDocBytes(doc) {
   try {
     return new TextEncoder().encode(JSON.stringify(doc)).length;
@@ -789,61 +1085,86 @@ function estimateDocBytes(doc) {
     return JSON.stringify(doc).length * 2;
   }
 }
+async function writeActivityDoc(crumbs, sessionId, from, to) {
+  const fns = await getFirestoreFunctions();
+  const collRef = getCollectionRef();
+  if (!fns || !collRef || isCircuitOpen()) return false;
+  const config = getPersistenceConfig();
+  const breadcrumbs = toFirestoreSafe(crumbs, []);
+  const maxBytes = config.maxDocumentBytes || 5e5;
+  const bbConfig = _blackbox._getConfig();
+  let doc = {
+    schemaVersion: config.schemaVersion,
+    type: "activity",
+    sessionId,
+    environment: bbConfig.environment || null,
+    tags: toFirestoreSafe(bbConfig.tags, {}),
+    user: toFirestoreSafe(bbConfig.user, null),
+    breadcrumbs,
+    period: {
+      from,
+      to
+    },
+    metadata: {
+      viewport: `${window.innerWidth}x${window.innerHeight}`,
+      timestamp: to
+    },
+    createdAt: fns.serverTimestamp(),
+    // Expires after 48h: removed by a Firestore TTL policy on expireAt if one is
+    // enabled, otherwise by the next bb-check run
+    expireAt: fns.Timestamp.fromDate(new Date(Date.now() + 48 * 60 * 60 * 1e3))
+  };
+  const size = estimateDocBytes(doc);
+  if (size > maxBytes && doc.breadcrumbs.length > 20) {
+    doc.breadcrumbs = doc.breadcrumbs.slice(-20);
+  }
+  await fns.addDoc(collRef, doc);
+  return true;
+}
 async function flushActivity(currentBreadcrumbs) {
   if (isCircuitOpen()) return;
   try {
-    const collRef = getCollectionRef();
-    const fns = await getFirestoreFunctions();
-    if (!fns || !collRef) return;
-    const config = getPersistenceConfig();
     const now = (/* @__PURE__ */ new Date()).toISOString();
     const from = _lastFlushTime || now;
     const newCrumbs = currentBreadcrumbs.filter((c) => {
       return !_lastFlushTime || c.timestamp > _lastFlushTime;
     });
+    let saved = null;
+    try {
+      if (newCrumbs.length === 0) {
+        sessionStorage.removeItem(PENDING_KEY);
+      } else {
+        saved = JSON.stringify({
+          sessionId: _blackbox.getSessionId(),
+          breadcrumbs: newCrumbs.slice(-40),
+          timestamp: now
+        });
+        sessionStorage.setItem(PENDING_KEY, saved);
+      }
+    } catch (e) {
+    }
     if (newCrumbs.length === 0) return;
-    let breadcrumbs = newCrumbs;
-    const maxBytes = config.maxDocumentBytes || 5e5;
-    if (breadcrumbs.length > 40) {
-      breadcrumbs = breadcrumbs.slice(-40);
+    if (!await writeActivityDoc(newCrumbs, _blackbox.getSessionId(), from, now)) return;
+    _lastFlushTime = newCrumbs[newCrumbs.length - 1].timestamp;
+    try {
+      if (saved && sessionStorage.getItem(PENDING_KEY) === saved) sessionStorage.removeItem(PENDING_KEY);
+    } catch (e) {
     }
-    const bbConfig = _blackbox._getConfig();
-    let doc = {
-      schemaVersion: config.schemaVersion,
-      type: "activity",
-      sessionId: _blackbox.getSessionId(),
-      environment: bbConfig.environment || null,
-      tags: bbConfig.tags || {},
-      user: bbConfig.user || null,
-      breadcrumbs,
-      period: {
-        from,
-        to: now
-      },
-      metadata: {
-        viewport: `${window.innerWidth}x${window.innerHeight}`,
-        timestamp: now
-      },
-      createdAt: fns.serverTimestamp(),
-      expireAt: fns.Timestamp.fromDate(new Date(Date.now() + 48 * 60 * 60 * 1e3))
-      // auto-delete after 48h via Firestore TTL
-    };
-    const size = estimateDocBytes(doc);
-    if (size > maxBytes && doc.breadcrumbs.length > 20) {
-      doc.breadcrumbs = doc.breadcrumbs.slice(-20);
-    }
-    await fns.addDoc(collRef, doc);
-    _lastFlushTime = now;
   } catch (e) {
   }
 }
-function initActivityLog(blackbox2) {
+function initActivityLog(blackbox2, recovery) {
   try {
     _blackbox = blackbox2;
     _lastFlushTime = null;
     blackbox2._onActivityFlush((breadcrumbs) => {
       flushActivity(breadcrumbs);
     });
+    const crumbs = recovery == null ? void 0 : recovery.breadcrumbs;
+    if (Array.isArray(crumbs) && crumbs.length > 0) {
+      writeActivityDoc(crumbs, recovery.sessionId, crumbs[0].timestamp, crumbs[crumbs.length - 1].timestamp).catch(() => {
+      });
+    }
   } catch (e) {
     console.warn("[BlackBox] Activity log init failed:", e);
   }
@@ -875,22 +1196,28 @@ var _cleanupFns = [];
 var _recentErrors = [];
 var _errorStorms = /* @__PURE__ */ new Map();
 var _diagnostics = [];
+var _preInit = {};
 var DIAGNOSTIC_DEFAULT_TIMEOUT_MS = 200;
+var EXTENDING_LIST_OPTIONS = ["consoleIgnorePatterns", "networkExcludePatterns"];
 var ERROR_STORM_WINDOW = 5e3;
 var ERROR_STORM_THRESHOLD = 5;
+function _sanitizeHash(hash) {
+  const qIndex = hash.indexOf("?");
+  const route = qIndex === -1 ? hash : hash.substring(0, qIndex);
+  return route.includes("=") ? "" : route;
+}
 function _stripQueryParams(url) {
   if (!url || !_config.stripQueryParams) return url;
   try {
     if (url.startsWith("http")) {
       const u = new URL(url);
-      return u.origin + u.pathname + u.hash;
+      return u.origin + u.pathname + _sanitizeHash(u.hash);
     }
-    const qIndex = url.indexOf("?");
-    if (qIndex === -1) return url;
     const hashIndex = url.indexOf("#");
-    if (hashIndex !== -1 && hashIndex < qIndex) return url;
-    const base = url.substring(0, qIndex);
-    const hash = hashIndex > qIndex ? url.substring(hashIndex) : "";
+    let base = hashIndex === -1 ? url : url.substring(0, hashIndex);
+    const hash = hashIndex === -1 ? "" : _sanitizeHash(url.substring(hashIndex));
+    const qIndex = base.indexOf("?");
+    if (qIndex !== -1) base = base.substring(0, qIndex);
     return base + hash;
   } catch (e) {
     return url;
@@ -933,14 +1260,20 @@ function _diagnosticMatches(d, errorEntry) {
 }
 function _runDiagnosticsFor(errorEntry) {
   if (_diagnostics.length === 0) return;
+  const done = [];
   for (const d of _diagnostics) {
     if (!_diagnosticMatches(d, errorEntry)) continue;
     const timeoutMs = d.timeoutMs || DIAGNOSTIC_DEFAULT_TIMEOUT_MS;
     let settled = false;
+    let markDone;
+    done.push(new Promise((resolve) => {
+      markDone = resolve;
+    }));
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
       _attachDiagnosticResult(errorEntry, d.name, { error: "timeout", timeoutMs });
+      markDone();
     }, timeoutMs);
     Promise.resolve().then(() => d.run(errorEntry)).then(
       (result) => {
@@ -948,14 +1281,26 @@ function _runDiagnosticsFor(errorEntry) {
         settled = true;
         clearTimeout(timer);
         _attachDiagnosticResult(errorEntry, d.name, result);
+        markDone();
       },
       (err) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
         _attachDiagnosticResult(errorEntry, d.name, { error: (err == null ? void 0 : err.message) || String(err) });
+        markDone();
       }
     );
+  }
+  if (done.length > 0) {
+    try {
+      Object.defineProperty(errorEntry, "_diagnosticsDone", {
+        value: Promise.allSettled(done),
+        enumerable: false,
+        configurable: true
+      });
+    } catch (e) {
+    }
   }
 }
 function _attachDiagnosticResult(errorEntry, name, result) {
@@ -981,7 +1326,7 @@ var blackbox = {
     }
     if (enabled === void 0 || enabled === null) {
       try {
-        if (typeof process !== "undefined" && process.env && process.env.NODE_ENV === "production") {
+        if (process.env.NODE_ENV === "production") {
           console.log("[BlackBox] Disabled");
           return blackbox;
         }
@@ -991,12 +1336,24 @@ var blackbox = {
     if (options.db && typeof options.db !== "object") {
       console.error("[BlackBox] init() `db` must be a Firestore instance. Got:", typeof options.db);
     }
-    _config = __spreadValues(__spreadValues({}, DEFAULTS), options);
+    const cfg = __spreadValues(__spreadValues({}, DEFAULTS), _preInit);
+    for (const [key, value] of Object.entries(options)) {
+      if (value !== void 0) cfg[key] = value;
+    }
+    cfg.tags = __spreadValues(__spreadValues(__spreadValues({}, DEFAULTS.tags), _preInit.tags), options.tags);
+    for (const key of EXTENDING_LIST_OPTIONS) {
+      cfg[key] = [...DEFAULTS[key], ...Array.isArray(options[key]) ? options[key] : []];
+    }
+    _config = cfg;
+    _preInit = {};
     try {
-      if (!_config.buildSha && typeof process !== "undefined" && process.env) {
+      if (!_config.buildSha) {
         _config.buildSha = process.env.NEXT_PUBLIC_BUILD_SHA || process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA || process.env.VERCEL_GIT_COMMIT_SHA || process.env.NETLIFY_COMMIT_REF || process.env.GITHUB_SHA || null;
       }
-      if (!_config.nodeEnv && typeof process !== "undefined" && process.env) {
+    } catch (e) {
+    }
+    try {
+      if (!_config.nodeEnv) {
         _config.nodeEnv = process.env.NODE_ENV || null;
       }
     } catch (e) {
@@ -1061,13 +1418,6 @@ var blackbox = {
       const handleUnload = () => {
         try {
           const pending = _breadcrumbs ? _breadcrumbs.snapshot() : [];
-          if (pending.length > 0) {
-            sessionStorage.setItem("__bb_pending_crumbs", JSON.stringify({
-              sessionId: _sessionId,
-              breadcrumbs: pending.slice(-40),
-              timestamp: (/* @__PURE__ */ new Date()).toISOString()
-            }));
-          }
           if (_onActivityFlushCallback) {
             _onActivityFlushCallback(pending);
           }
@@ -1092,16 +1442,9 @@ var blackbox = {
         console.warn("[BlackBox] Persistence init failed:", e);
       }
       try {
-        initActivityLog(blackbox);
+        initActivityLog(blackbox, _pendingRecovery);
       } catch (e) {
         console.warn("[BlackBox] Activity log init failed:", e);
-      }
-      if (_pendingRecovery && _onActivityFlushCallback) {
-        try {
-          _onActivityFlushCallback(_pendingRecovery.breadcrumbs);
-        } catch (e) {
-        }
-        _pendingRecovery = null;
       }
     }
     blackbox._addBreadcrumb("system", { action: "blackbox_initialized", sessionId: _sessionId });
@@ -1127,7 +1470,11 @@ var blackbox = {
     }
   },
   setUser(userInfo) {
-    if (!_initialized) return;
+    if (typeof window === "undefined") return;
+    if (!_initialized) {
+      _preInit.user = userInfo;
+      return;
+    }
     _config.user = userInfo;
   },
   /**
@@ -1154,18 +1501,29 @@ var blackbox = {
     if (typeof run !== "function") return;
     if (!(match instanceof RegExp) && typeof match !== "function") return;
     _diagnostics = _diagnostics.filter((d) => d.name !== name);
+    if (match instanceof RegExp && /[gy]/.test(match.flags)) {
+      match = new RegExp(match.source, match.flags.replace(/[gy]/g, ""));
+    }
     _diagnostics.push({ name, match, run, timeoutMs });
   },
   unregisterDiagnostic(name) {
     _diagnostics = _diagnostics.filter((d) => d.name !== name);
   },
   setTag(key, value) {
-    if (!_initialized) return;
+    if (typeof window === "undefined") return;
+    if (!_initialized) {
+      _preInit.tags = __spreadProps(__spreadValues({}, _preInit.tags), { [key]: value });
+      return;
+    }
     if (!_config.tags) _config.tags = {};
     _config.tags[key] = value;
   },
   setEnvironment(env) {
-    if (!_initialized) return;
+    if (typeof window === "undefined") return;
+    if (!_initialized) {
+      _preInit.environment = env;
+      return;
+    }
     _config.environment = env;
   },
   onUpdate(callback) {
@@ -1189,6 +1547,8 @@ var blackbox = {
   clearErrors() {
     _errorCount = 0;
     _errors = [];
+    _recentErrors = [];
+    _errorStorms = /* @__PURE__ */ new Map();
     _suspiciousSilences = [];
     if (_breadcrumbs) _breadcrumbs.clear();
     _notifySubscribers();
@@ -1200,7 +1560,7 @@ var blackbox = {
   // --- Firestore query methods for the UI panel ---
   async queryPersistedErrors(limit = 50) {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-5RZAKLKT.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-WQDXJK3C.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { errors: [], connected: false };
@@ -1239,16 +1599,12 @@ var blackbox = {
   },
   async queryHealth() {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-5RZAKLKT.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-WQDXJK3C.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { connected: false };
-      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1e3);
-      const q = fns.query(
-        ref,
-        fns.where("type", "==", "error"),
-        fns.where("createdAt", ">=", fns.Timestamp.fromDate(twentyFourHoursAgo))
-      );
+      const since = fns.Timestamp.fromDate(new Date(Date.now() - 24 * 60 * 60 * 1e3));
+      const q = fns.orderBy ? fns.query(ref, fns.where("type", "==", "error"), fns.where("lastSeen", ">=", since), fns.orderBy("lastSeen", "desc")) : fns.query(ref, fns.where("type", "==", "error"), fns.where("createdAt", ">=", since));
       const snapshot = await fns.getDocs(q);
       const errors = snapshot.docs.map((d) => d.data());
       const totalOccurrences = errors.reduce((sum, e) => sum + (e.occurrences || 1), 0);
@@ -1277,19 +1633,21 @@ var blackbox = {
   },
   async queryTimeline(minutes = 5) {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-5RZAKLKT.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-WQDXJK3C.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref) return { events: [], connected: false };
       const cutoff = new Date(Date.now() - minutes * 60 * 1e3);
-      const q = fns.query(
-        ref,
-        fns.where("createdAt", ">=", fns.Timestamp.fromDate(cutoff))
-      );
-      const snapshot = await fns.getDocs(q);
+      const ts = fns.Timestamp.fromDate(cutoff);
+      const q = fns.query(ref, fns.where("createdAt", ">=", ts));
+      const errQ = fns.orderBy ? fns.query(ref, fns.where("type", "==", "error"), fns.where("lastSeen", ">=", ts), fns.orderBy("lastSeen", "desc")) : null;
+      const [snapshot, errSnapshot] = await Promise.all([
+        fns.getDocs(q),
+        errQ ? fns.getDocs(errQ).catch(() => null) : null
+      ]);
       const seen = /* @__PURE__ */ new Set();
       const events = [];
-      for (const doc of snapshot.docs) {
+      for (const doc of [...snapshot.docs, ...(errSnapshot == null ? void 0 : errSnapshot.docs) || []]) {
         const data = doc.data();
         for (const bc of data.breadcrumbs || []) {
           if (bc.timestamp && !seen.has(bc.timestamp)) {
@@ -1306,21 +1664,23 @@ var blackbox = {
   },
   async clearPersistedErrors() {
     try {
-      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-5RZAKLKT.js");
+      const { getCollectionRef: getCollectionRef2, getFirestoreFunctions: getFirestoreFunctions2 } = await import("./persistence-WQDXJK3C.js");
       const fns = await getFirestoreFunctions2();
       const ref = getCollectionRef2();
       if (!fns || !ref || !fns.deleteDoc) return { success: false, error: "Not connected to Firestore" };
       const errorQuery = fns.query(ref, fns.where("type", "==", "error"));
       const snapshot = await fns.getDocs(errorQuery);
       let deleted = 0;
+      let firstError = null;
       for (const doc of snapshot.docs) {
         try {
           await fns.deleteDoc(doc.ref);
           deleted++;
         } catch (e) {
+          firstError = firstError || (e == null ? void 0 : e.message) || String(e);
         }
       }
-      return { success: true, deleted };
+      return __spreadValues({ success: deleted === snapshot.size, deleted, total: snapshot.size }, firstError ? { error: firstError } : {});
     } catch (e) {
       return { success: false, error: e.message };
     }
@@ -1353,9 +1713,16 @@ var blackbox = {
       }
       const now = Date.now();
       const norm = (message || "").replace(/^Uncaught\s+\w+:\s*/, "").slice(0, 100);
+      let sig;
+      try {
+        sig = (stack || "") + "\n" + JSON.stringify(context);
+      } catch (e) {
+        sig = {};
+      }
       _recentErrors = _recentErrors.filter((r) => now - r.t < 200);
-      const existingRecent = _recentErrors.find((r) => r.m === norm);
+      const existingRecent = _recentErrors.find((r) => r.m === norm && (!r.sigs.has(source) || r.sigs.get(source) === sig));
       if (existingRecent) {
+        if (!existingRecent.sigs.has(source)) existingRecent.sigs.set(source, sig);
         if (existingRecent.entry && source) {
           existingRecent.entry.firedAs = existingRecent.entry.firedAs || [existingRecent.entry.source];
           if (!existingRecent.entry.firedAs.includes(source)) {
@@ -1364,21 +1731,31 @@ var blackbox = {
         }
         return;
       }
-      const recentSlot = { m: norm, t: now, entry: null };
+      const recentSlot = { m: norm, t: now, sigs: /* @__PURE__ */ new Map([[source, sig]]), entry: null };
       _recentErrors.push(recentSlot);
+      if (_errorStorms.size > 100) {
+        for (const [key, s] of _errorStorms) {
+          if (now - s.lastSeen >= ERROR_STORM_WINDOW) _errorStorms.delete(key);
+        }
+      }
       const storm = _errorStorms.get(norm);
-      if (storm && now - storm.firstSeen < ERROR_STORM_WINDOW) {
+      if (storm && now - storm.lastSeen < ERROR_STORM_WINDOW) {
         storm.count++;
-        if (storm.count > ERROR_STORM_THRESHOLD) {
-          if (storm.lastEntry) {
-            storm.lastEntry._stormCount = storm.count;
-          }
+        storm.lastSeen = now;
+        if (storm.count > ERROR_STORM_THRESHOLD && storm.lastEntry && _errors.includes(storm.lastEntry)) {
+          storm.lastEntry._stormCount = storm.count;
           _errorCount++;
+          if (_onErrorCallback) {
+            try {
+              _onErrorCallback(storm.lastEntry);
+            } catch (e) {
+            }
+          }
           _notifySubscribers();
           return;
         }
       } else {
-        _errorStorms.set(norm, { count: 1, firstSeen: now, lastEntry: null });
+        _errorStorms.set(norm, { count: 1, firstSeen: now, lastSeen: now, lastEntry: null });
       }
       if (message && message.includes("Import trace")) {
         message = message.split(/\nImport trace/)[0].trim();
@@ -1533,11 +1910,15 @@ var blackbox = {
             const sTime = s._timestamp || 0;
             return clickTime - sTime < 15e3;
           });
+          const sameElement = (a, b) => {
+            if (!a || !b || a.tag !== b.tag) return false;
+            if (a.dataBb != null || b.dataBb != null) return a.dataBb === b.dataBb;
+            if (a.id || b.id) return a.id === b.id;
+            if (a.text || b.text) return a.text === b.text;
+            return false;
+          };
           const relatedSilenceCount = recentSilences.filter(
-            (s) => {
-              var _a2, _b, _c;
-              return ((_a2 = s.clickedElement) == null ? void 0 : _a2.tag) === clickDetails.tag && (((_b = s.clickedElement) == null ? void 0 : _b.text) === clickDetails.text || ((_c = s.clickedElement) == null ? void 0 : _c.dataBb) === clickDetails.dataBb);
-            }
+            (s) => sameElement(s.clickedElement, clickDetails)
           ).length;
           _suspiciousSilences.push(silence);
           if (_suspiciousSilences.length > 20) _suspiciousSilences.shift();
@@ -1559,15 +1940,20 @@ var blackbox = {
     }, _config.silenceDetectionDelay);
     _pendingSilenceChecks.push(checkId);
   },
-  /** Tear down BlackBox: remove all hooks, clear timers, reset state. Useful for HMR cleanup. */
+  /**
+   * Tear down BlackBox: remove all hooks, clear timers, reset state. Useful for HMR cleanup.
+   * Keeps onUpdate subscribers and registered diagnostics: their owners (e.g. the panel,
+   * top-level registerDiagnostic calls) outlive this teardown and remove them with the
+   * unsubscribe function / unregisterDiagnostic.
+   */
   destroy() {
     _initialized = false;
     _config = {};
+    _preInit = {};
     _sessionId = null;
     _breadcrumbs = null;
     _errors = [];
     _errorCount = 0;
-    _subscribers = [];
     _onErrorCallback = null;
     _onActivityFlushCallback = null;
     _suspiciousSilences = [];
@@ -1575,7 +1961,6 @@ var blackbox = {
     _lastFetchStartTime = 0;
     _recentErrors = [];
     _errorStorms = /* @__PURE__ */ new Map();
-    _diagnostics = [];
     for (const id of _pendingSilenceChecks) clearTimeout(id);
     _pendingSilenceChecks = [];
     if (_flushTimer) clearInterval(_flushTimer);
@@ -1595,10 +1980,13 @@ var blackbox = {
       _resetActivityLog();
     } catch (e) {
     }
+    _notifySubscribers();
   },
-  // For testing: alias
+  // For testing: full wipe, including caller-owned registrations
   _reset() {
     this.destroy();
+    _subscribers = [];
+    _diagnostics = [];
   }
 };
 var blackbox_default = blackbox;

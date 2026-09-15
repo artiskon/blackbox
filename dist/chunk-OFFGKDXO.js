@@ -1,15 +1,16 @@
 import {
   blackbox_default
-} from "./chunk-WOIMV5D3.js";
+} from "./chunk-A3IAWLS3.js";
 import {
   __spreadProps,
   __spreadValues
-} from "./chunk-W2CFSJ2O.js";
+} from "./chunk-3QPKAOHJ.js";
 
 // src/core/hooks/storageHook.js
-async function bbR2Fetch(input, init = {}, details = {}) {
+async function bbR2Fetch(input, init, details = {}) {
   var _a, _b;
-  const method = (init.method || "GET").toUpperCase();
+  const request = typeof Request !== "undefined" && input instanceof Request ? input : null;
+  const method = ((init == null ? void 0 : init.method) || (request == null ? void 0 : request.method) || "GET").toUpperCase();
   let url = "";
   try {
     url = typeof input === "string" ? input : (input == null ? void 0 : input.url) || String(input);
@@ -29,6 +30,8 @@ async function bbR2Fetch(input, init = {}, details = {}) {
   } catch (err) {
     try {
       const duration = Date.now() - start;
+      const signal = (init == null ? void 0 : init.signal) || (input == null ? void 0 : input.signal);
+      const aborted = (err == null ? void 0 : err.name) === "AbortError" || !!(signal == null ? void 0 : signal.aborted) && (err == null ? void 0 : err.name) !== "TimeoutError";
       const ctx = __spreadValues(__spreadProps(__spreadValues(__spreadValues(__spreadValues({
         method,
         url: safeUrl,
@@ -36,13 +39,15 @@ async function bbR2Fetch(input, init = {}, details = {}) {
       }, details.description ? { description: String(details.description).slice(0, 200) } : {}), details.bucket ? { bucket: String(details.bucket).slice(0, 100) } : {}), details.key ? { key: String(details.key).slice(0, 200) } : {}), {
         error: (err == null ? void 0 : err.message) || String(err)
       }), url !== safeUrl ? { _rawUrl: url } : {});
-      blackbox_default._addBreadcrumb("network", { method, url: safeUrl, status: 0, duration, ok: false, error: ctx.error, _storage: true });
-      blackbox_default._recordError({
-        message: `Storage error: ${method} ${safeUrl} - ${ctx.error}`,
-        stack: (err == null ? void 0 : err.stack) || "",
-        source: "storage",
-        context: ctx
-      });
+      blackbox_default._addBreadcrumb("network", __spreadProps(__spreadValues({ method, url: safeUrl, status: 0, duration, ok: false, error: ctx.error }, aborted ? { aborted: true } : {}), { _storage: true }));
+      if (!aborted) {
+        blackbox_default._recordError({
+          message: `Storage error: ${method} ${safeUrl} - ${ctx.error}`,
+          stack: (err == null ? void 0 : err.stack) || "",
+          source: "storage",
+          context: ctx
+        });
+      }
     } catch (e) {
     }
     throw err;

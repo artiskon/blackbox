@@ -55,7 +55,8 @@ export function installResourceHook(blackbox) {
   //                                  should check the Network tab to disambiguate.
   //                                  (Replaces the old, misleading 'cors_blocked'.)
   //   'unreachable_origin'       — DNS / TLS / connection refused (origin doesn't answer)
-  //   'unknown'                  — couldn't probe (data: URL, relative path, etc.)
+  //   'unknown'                  — couldn't probe (data: URL, relative path, empty src
+  //                                  (then emptySrc: true), etc.)
 
   // Maps each tag to the content-type families it can actually render. Used to
   // detect "img tag receiving video bytes" mismatches once we have the probe's
@@ -85,21 +86,45 @@ export function installResourceHook(blackbox) {
       if (!resourceTags.has(target.tagName)) return;
 
       const tagName = target.tagName.toLowerCase();
+      // An empty src attribute (<img src="">, video.src = '') also fires
+      // error, and the src property then resolves to the PAGE url. Probing
+      // that reports a per-route tag_content_type_mismatch (ADR-0013,
+      // ADR-0008), so it's reported as an empty src instead, one row per tag.
+      const srcAttr = target.getAttribute(tagName === 'link' ? 'href' : 'src');
+      const emptySrc = srcAttr !== null && srcAttr.trim() === '' && !target.getAttribute('srcset');
       // rawSrc keeps the query string intact (signed-URL tokens, ?mode=
       // selectors, cache busters). Used for the probe (so we hit the
       // actual response the browser saw) and exposed as the ephemeral
       // context._rawSrc surface for diagnostic matchers. Stripped src
       // is what we persist for fingerprint stability and privacy.
-      const rawSrc = target.src || target.href || '';
+      // currentSrc is the srcset / <source> variant actually loaded.
+      const rawSrc = emptySrc ? '' : target.currentSrc || target.src || target.href || '';
       const src = blackbox._stripQueryParams(rawSrc);
 
-      const hostname = safeHostname(src);
+      // next/image serves /_next/image?url=<asset>&w=..; stripping the query
+      // drops the only part naming the asset, so unwrap it to group by the
+      // real host (same idea as the /cdn-cgi/image/ prefix in fingerprint.js).
+      let upstreamSrc = null;
+      let viaPath = null;
+      try {
+        const wrapper = new URL(rawSrc);
+        const inner = wrapper.searchParams.get('url');
+        if (inner && /\/_(?:next|vercel)\/image$/.test(wrapper.pathname)) {
+          upstreamSrc = blackbox._stripQueryParams(new URL(inner, wrapper.href).href);
+          viaPath = wrapper.pathname;
+        }
+      } catch { /* not a URL */ }
+
+      const hostname = safeHostname(upstreamSrc || src);
       const context = {
         tagName,
         src,
         hostname,
         id: target.id || null,
-        className: (target.className?.toString() || '').slice(0, 100),
+        // Attribute, not .className: on SVG <image>/<use> that's an
+        // SVGAnimatedString and would stringify to '[object SVGAnimatedString]'
+        className: (target.getAttribute?.('class') || '').slice(0, 100),
+        ...(upstreamSrc ? { upstreamSrc } : {}),
         // Underscore-prefixed: ephemeral, stripped before persistence and
         // before panel report export. Visible to registerDiagnostic match
         // functions so they can match on the original URL with query.
@@ -130,11 +155,12 @@ export function installResourceHook(blackbox) {
         }
       } catch { /* ignore */ }
 
+      const label = emptySrc ? '(empty src)' : upstreamSrc ? `${upstreamSrc} (via ${viaPath})` : src;
       const emit = (reachability, extra) => {
         context.urlReachability = reachability;
         if (extra) Object.assign(context, extra);
         blackbox._recordError({
-          message: `Resource failed to load: ${tagName} - ${src}`,
+          message: `Resource failed to load: ${tagName} - ${label}`,
           stack: '',
           source: 'resource_load',
           context
@@ -154,7 +180,12 @@ export function installResourceHook(blackbox) {
       // before the probe — as we did pre-1.9.3 — caused a tag_content_type_
       // mismatch demo to misclassify, because the probe hit the bare
       // endpoint instead of the URL the browser actually loaded.
-      if (rawSrc && rawSrc.startsWith('http') && nativeFetch) {
+      if (emptySrc) {
+        emit('unknown', {
+          emptySrc: true,
+          action_hint: `<${tagName}> rendered with an empty src; the URL variable was empty/undefined at render time. Don't render the element until the URL exists instead of passing ''.`,
+        });
+      } else if (rawSrc && rawSrc.startsWith('http') && nativeFetch) {
         nativeFetch(rawSrc, {
           method: 'GET',
           mode: 'cors',

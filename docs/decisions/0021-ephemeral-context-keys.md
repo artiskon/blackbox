@@ -19,6 +19,7 @@ Underscore-prefixed keys on `errorEntry.context` (e.g. `context._rawUrl`, `conte
 3. Are stripped by `stripEphemeralContextKeys()` before:
    - Firestore persistence (`addDoc` path in `persistence.js`)
    - Panel report export (`copyFullReport` in `BlackBoxPanel.js`)
+   - Per-error "Copy JSON" export (`errorToJSON` in `BlackBoxPanel.js`; added 2026-09-13) and the panel's expanded-row "Context" list, which never displays them
 4. Are also visible to function-style `match` callbacks (the entire `errorEntry` is passed in, so the matcher can read whatever it wants)
 
 The convention is enforced by code (the strip helper) rather than by the type system or documentation alone — a naming convention this load-bearing needs an enforcement point.
@@ -42,4 +43,5 @@ The convention is enforced by code (the strip helper) rather than by the type sy
 
 ## Subsequent feedback
 
-- None yet. Watch for "diagnostic regex matched against raw URL but context.url is stripped — confusing" reports; if so, document the dichotomy more loudly in `BLACKBOX-PROMPT.md`.
+- None through v1.9.5. Watch for "diagnostic regex matched against raw URL but context.url is stripped — confusing" reports; if so, document the dichotomy more loudly in `BLACKBOX-PROMPT.md`.
+- **2026-09-13 (unreleased, after v1.9.5; additive):** the per-error "Copy JSON" button in the panel serialized the raw entry and leaked `_rawUrl` / `_rawSrc` (signed-URL tokens) even though the full report stripped them; it now goes through the same strip (Decision item 3 amended). Related privacy strip: `stripQueryParams` now also removes queries inside hash routes (`#/reset?token=x` → `#/reset`) and drops `key=value` fragments such as OAuth `#access_token=...`, both in stored URLs and in the fingerprint's path normalization, so those tokens don't persist. Fingerprints change once for paths that had such hashes.

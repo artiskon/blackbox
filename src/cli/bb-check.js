@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { connectToFirestore } from './shared/firebase-connect.js';
-import { writeLog, checkCollectionSize, formatError } from './shared/utils.js';
+import { writeLog, checkCollectionSize, formatError, parseCliArgs } from './shared/utils.js';
 import { collection, query, where, orderBy, limit, getDocs, deleteDoc, doc as docRef } from 'firebase/firestore';
 import fs from 'fs';
 import path from 'path';
@@ -10,51 +10,46 @@ const CURRENT_SCHEMA = 1;
 const LAST_CHECK_FILE = path.join(process.cwd(), 'dev-logs', '.bb-last-check');
 
 // Silently drop docs older than this so the collection doesn't grow forever
-// and the "501-doc warning" doesn't fire while you're still mid-debug. The
-// previous behavior nagged the user; new behavior cleans up in the same
-// breath as the read.
+// and the "501-doc warning" rarely fires while you're still mid-debug.
 const STALE_DAYS = 7;
 
-function parseArgs() {
-  const args = process.argv.slice(2);
-  let verbose = false;
-  let id = null;
-  let newOnly = false;
-  let pathFilter = null;
-  let sourceFilter = null;
-  let sinceFilter = null; // ms
-  let statusFilter = null; // number | null
-  let includeInternal = false;
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === '--verbose' || a === '-v') verbose = true;
-    else if (a === '--new') newOnly = true;
-    else if (a === '--include-internal') includeInternal = true;
-    else if (a === '--id' && args[i + 1]) { id = args[++i]; }
-    else if (a.startsWith('--id=')) { id = a.slice(5); }
-    else if (a === '--path' && args[i + 1]) { pathFilter = args[++i]; }
-    else if (a.startsWith('--path=')) { pathFilter = a.slice(7); }
-    else if (a === '--source' && args[i + 1]) { sourceFilter = args[++i]; }
-    else if (a.startsWith('--source=')) { sourceFilter = a.slice(9); }
-    else if (a === '--since' && args[i + 1]) { sinceFilter = parseDuration(args[++i]); }
-    else if (a.startsWith('--since=')) { sinceFilter = parseDuration(a.slice(8)); }
-    else if (a === '--status' && args[i + 1]) { statusFilter = parseInt(args[++i], 10); }
-    else if (a.startsWith('--status=')) { statusFilter = parseInt(a.slice(9), 10); }
-  }
-  if (Number.isNaN(statusFilter)) statusFilter = null;
-  return { verbose, id, newOnly, pathFilter, sourceFilter, sinceFilter, statusFilter, includeInternal };
-}
+const USAGE = `Usage: bb-check [options]
+  --id <fingerprint>        Full detail for one error (skips the stale-doc purge)
+  --new                     Only errors seen since the last unfiltered bb-check
+                            (--path/--source/--since/--status runs don't move it)
+  --since <duration>        Only errors seen within 30s, 5m, 2h, 7d, ...
+  --path <substring>        Only errors whose path contains the substring
+  --source <source>         Only errors with this source (network, storage, firebase, ...)
+  --status <code>           Only errors with this HTTP status
+  --include-internal        Also show framework-internal errors
+  -v, --verbose             Full messages, paths and context
+  -h, --help                Show this help
+Both --flag value and --flag=value work.`;
 
-// Parses "1h", "30m", "2d", "10s" → milliseconds. Anything unrecognized
-// silently maps to null so the caller can treat it as "no filter".
-function parseDuration(s) {
-  if (!s) return null;
-  const m = String(s).trim().toLowerCase().match(/^(\d+)([smhd])$/);
-  if (!m) return null;
-  const n = parseInt(m[1], 10);
-  const unit = m[2];
-  const mult = unit === 's' ? 1000 : unit === 'm' ? 60000 : unit === 'h' ? 3600000 : 86400000;
-  return n * mult;
+// Unknown flags and unparseable values exit before connecting, so a typo like
+// --since=1w can't silently return unfiltered results (and --help doesn't run
+// the purge or reset the --new baseline).
+function parseArgs() {
+  const { flags } = parseCliArgs({
+    '--verbose|-v': 'bool',
+    '--new': 'bool',
+    '--include-internal': 'bool',
+    '--id': 'string',
+    '--path': 'string',
+    '--source': 'string',
+    '--since': 'duration',
+    '--status': 'int',
+  }, USAGE);
+  return {
+    verbose: flags.verbose === true,
+    id: flags.id ?? null,
+    newOnly: flags.new === true,
+    pathFilter: flags.path ?? null,
+    sourceFilter: flags.source ?? null,
+    sinceFilter: flags.since ?? null, // ms
+    statusFilter: flags.status ?? null, // number | null
+    includeInternal: flags['include-internal'] === true,
+  };
 }
 
 function timeAgo(isoString) {
@@ -73,47 +68,57 @@ function getLastCheckTime() {
   } catch { return null; }
 }
 
-function saveLastCheckTime() {
+function saveLastCheckTime(isoString) {
   try {
     const dir = path.dirname(LAST_CHECK_FILE);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(LAST_CHECK_FILE, new Date().toISOString());
+    fs.writeFileSync(LAST_CHECK_FILE, isoString);
   } catch { /* ignore */ }
 }
 
-// Best-effort cleanup of docs older than STALE_DAYS. Runs silently and never
-// throws — if it fails (rules, network, transient), we just continue. This
-// replaces the prior "501 docs, queries may be slow" warning.
+// Best-effort cleanup of docs not seen for STALE_DAYS, plus activity docs past
+// their expireAt (they have no lastSeen, and the 48h expiry only happens on
+// its own if the project enabled a Firestore TTL policy on expireAt). Runs
+// silently and never throws — if a query fails (rules, network, transient),
+// we just continue. checkCollectionSize still runs after it as a backstop.
 async function purgeStaleDocs(db, collectionName, isAdmin) {
-  const cutoff = new Date(Date.now() - STALE_DAYS * 24 * 60 * 60 * 1000);
+  const cutoffs = [
+    ['lastSeen', new Date(Date.now() - STALE_DAYS * 24 * 60 * 60 * 1000)],
+    ['expireAt', new Date()],
+  ];
   let purged = 0;
-  try {
-    if (isAdmin) {
-      const snap = await db.collection(collectionName)
-        .where('lastSeen', '<', cutoff)
-        .limit(200)
-        .get();
-      for (const d of snap.docs) {
-        try { await d.ref.delete(); purged++; } catch { /* skip */ }
+  for (const [field, cutoff] of cutoffs) {
+    try {
+      if (isAdmin) {
+        const snap = await db.collection(collectionName)
+          .where(field, '<', cutoff)
+          .limit(200)
+          .get();
+        for (const d of snap.docs) {
+          try { await d.ref.delete(); purged++; } catch { /* skip */ }
+        }
+      } else {
+        const q = query(
+          collection(db, collectionName),
+          where(field, '<', cutoff),
+          limit(200)
+        );
+        const snap = await getDocs(q);
+        for (const d of snap.docs) {
+          try { await deleteDoc(docRef(db, collectionName, d.id)); purged++; } catch { /* skip */ }
+        }
       }
-    } else {
-      const q = query(
-        collection(db, collectionName),
-        where('lastSeen', '<', cutoff),
-        limit(200)
-      );
-      const snap = await getDocs(q);
-      for (const d of snap.docs) {
-        try { await deleteDoc(docRef(db, collectionName, d.id)); purged++; } catch { /* skip */ }
-      }
-    }
-  } catch { /* ignore — cleanup is best-effort */ }
+    } catch { /* ignore — cleanup is best-effort */ }
+  }
   return purged;
 }
 
 async function main() {
   try {
     const { verbose, id, newOnly, pathFilter, sourceFilter, sinceFilter, statusFilter, includeInternal } = parseArgs();
+    // The --new baseline is taken BEFORE the query, so errors that land while
+    // this run is reading/printing still count as new next time.
+    const checkStartedAt = new Date().toISOString();
     const { db, collectionName, isAdmin } = await connectToFirestore();
 
     // Silent cleanup before the read so the user never sees "queries may be
@@ -242,7 +247,10 @@ async function main() {
           console.log(`Breadcrumbs (last ${Math.min(err.breadcrumbs.length, 10)}):`);
           err.breadcrumbs.slice(-10).forEach(bc => {
             const time = bc.timestamp ? new Date(bc.timestamp).toLocaleTimeString() : '?';
-            console.log(`  ${time} [${bc.type}] ${bc.action || bc.message || bc.url || bc.to || ''}`);
+            const detail = bc.type === 'click'
+              ? `${bc.tag || 'element'}${bc.id ? '#' + bc.id : ''} "${bc.text || bc.autoLabel || ''}"`
+              : (bc.action || bc.message || bc.url || bc.to || '');
+            console.log(`  ${time} [${bc.type}] ${detail}`);
           });
         }
       }
@@ -479,7 +487,11 @@ async function main() {
       console.log('');
     }
 
-    saveLastCheckTime();
+    // Only an unfiltered run moves the --new baseline. A narrow look like
+    // --source=storage must not hide other sources' errors from the next --new.
+    if ([pathFilter, sourceFilter, sinceFilter, statusFilter].every(f => f === null)) {
+      saveLastCheckTime(checkStartedAt);
+    }
     process.exit(0);
   } catch (e) {
     if (e.message?.includes('index') || e.message?.includes('requires an index')) {

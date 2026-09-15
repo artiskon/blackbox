@@ -1,17 +1,27 @@
 // ---- Config ----
 
+/** Options passed as `undefined` fall back to their defaults. */
 export interface BlackBoxConfig {
   /** Firestore database instance */
   db?: any;
   /** Force BlackBox on even when NODE_ENV === 'production' */
   enabled?: boolean;
-  /** Strip query parameters from stored URLs (default: true) */
+  /** Strip query parameters from stored URLs (default: true). Also strips
+   *  queries inside hash routes (`#/reset?token=x` → `#/reset`) and drops
+   *  key=value fragments such as `#access_token=...`. */
   stripQueryParams?: boolean;
-  /** Capture request/response bodies (default: false) */
+  /** Extend request-body capture to cross-origin hosts and all methods
+   *  (default: false). Even when false, same-origin POST/PUT/PATCH request
+   *  bodies go on network breadcrumbs (300 chars), same-origin failed-request
+   *  bodies go on the error context (maxErrorBodyLength), and non-2xx
+   *  response bodies are captured for any host. Values of secret-looking
+   *  request-body keys (password, token, secret, authorization, api key) are
+   *  replaced with `[redacted]`. */
   captureRequestBodies?: boolean;
   /** Custom redaction hook — return null to drop the breadcrumb */
   sanitize?: ((breadcrumb: Breadcrumb) => Breadcrumb | null) | null;
-  /** Console messages matching these patterns are silently dropped */
+  /** Console messages matching these patterns are silently dropped. Added to
+   *  the built-in defaults (they can't be removed by passing a shorter list). */
   consoleIgnorePatterns?: string[];
   /** Firestore collection name (default: '__blackbox') */
   collectionName?: string;
@@ -19,16 +29,23 @@ export interface BlackBoxConfig {
   maxBreadcrumbs?: number;
   /** Max bytes to capture from request/response bodies on non-2xx responses (default: 1024) */
   maxErrorBodyLength?: number;
-  /** URL patterns to exclude from network tracking (default: Firestore, HMR, etc.) */
+  /** URL patterns to exclude from network tracking. Added to the built-in
+   *  defaults (Firestore, Identity Toolkit, Secure Token, Next stack frames,
+   *  hot-update). */
   networkExcludePatterns?: string[];
-  /** Environment label (e.g. 'development', 'staging') */
+  /** Environment label (e.g. 'development', 'staging'). Wins over a
+   *  setEnvironment() call made before init. */
   environment?: string;
-  /** Arbitrary key-value tags */
+  /** Arbitrary key-value tags. Merged with setTag() calls made before init;
+   *  on a conflicting key the value passed here wins. */
   tags?: Record<string, string>;
-  /** User context for error attribution */
+  /** User context for error attribution. Wins over a setUser() call made
+   *  before init. */
   user?: { id?: string; role?: string; [key: string]: any } | null;
-  /** Correlation token persisted as top-level `sessionTag` on each error doc
-   *  (and `lastSeenSessionTag` on update). Auto-read from
+  /** Correlation token persisted as top-level `sessionTag` on each new error
+   *  doc, and as `lastSeenSessionTag` on both create and update, so
+   *  `where('lastSeenSessionTag', '==', tag)` finds new and re-fired
+   *  fingerprints alike. Auto-read from
    *  `window.__BB_SESSION_TAG__` if set before init. Trimmed to 64 chars.
    *  Used by audit runners (e.g. DigitalDen ui-check Playwright runner) to
    *  filter `__blackbox` by their own session and ignore concurrent
@@ -138,8 +155,12 @@ export interface QueryTimelineResult {
 }
 
 export interface ClearResult {
+  /** True only when every matched doc was deleted */
   success: boolean;
   deleted?: number;
+  /** Number of error docs the delete query matched (absent if the query itself failed) */
+  total?: number;
+  /** The query error, or the first per-doc delete failure */
   error?: string;
 }
 
@@ -179,7 +200,8 @@ export interface BlackBox {
   /** Query persisted errors from Firestore */
   queryPersistedErrors(limit?: number): Promise<QueryErrorsResult>;
 
-  /** Query health summary from Firestore (last 24 hours) */
+  /** Query health summary from Firestore: errors seen (lastSeen) in the last
+   *  24 hours; totalOccurrences are those errors' lifetime counts */
   queryHealth(): Promise<QueryHealthResult>;
 
   /** Query activity timeline from Firestore */
@@ -191,18 +213,27 @@ export interface BlackBox {
   /** Check if BlackBox is connected to Firestore */
   isConnectedToFirestore(): boolean;
 
-  /** Set user context for error attribution */
+  /** Set user context for error attribution. A call made before init() is
+   *  applied when init() runs (an explicit `user` init option wins). No-op on
+   *  the server. */
   setUser(user: { id?: string; role?: string; [key: string]: any } | null): void;
 
-  /** Set a tag key-value pair */
+  /** Set a tag key-value pair. Calls made before init() are applied when
+   *  init() runs, merged with the `tags` init option (which wins on
+   *  conflicts). No-op on the server. */
   setTag(key: string, value: string): void;
 
-  /** Set the environment label */
+  /** Set the environment label. A call made before init() is applied when
+   *  init() runs (an explicit `environment` init option wins). No-op on the
+   *  server. */
   setEnvironment(env: string): void;
 
   /** Register an app-defined diagnostic that runs on every matching error
    *  and attaches its result to context.diagnostics[name]. Hard-capped at
-   *  timeoutMs (default 200ms) — design diagnostics to be fast.
+   *  timeoutMs (default 200ms) — design diagnostics to be fast. The error's
+   *  Firestore write waits for matching diagnostics (up to timeoutMs), so the
+   *  result is persisted. RegExp `g`/`y` flags are ignored. Registrations
+   *  survive destroy(); remove them with unregisterDiagnostic().
    */
   registerDiagnostic(
     name: string,
@@ -216,7 +247,10 @@ export interface BlackBox {
   /** Remove a previously-registered diagnostic. */
   unregisterDiagnostic(name: string): void;
 
-  /** Tear down BlackBox: remove all hooks, clear timers, reset state. Useful for HMR cleanup. */
+  /** Tear down BlackBox: remove all hooks, clear timers, reset state. Useful for HMR cleanup.
+   *  Keeps onUpdate subscribers and registered diagnostics: their owners (e.g. the panel,
+   *  top-level registerDiagnostic calls) remove them with the unsubscribe function /
+   *  unregisterDiagnostic. Subscribers are notified so they re-read the empty state. */
   destroy(): void;
 }
 

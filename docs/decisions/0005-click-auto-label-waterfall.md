@@ -12,9 +12,9 @@ Two debugging sessions reported click breadcrumbs of the form `{type: 'click', e
 
 Always synthesize a label via cascading `synthesizeLabel(el)`:
 
-1. `aria-label` → `title` → for `<img>`: `alt` → for `<input>`: `placeholder` || `value` (truncated)
-2. Closest interactive ancestor (`button, a, [role="button"]`) text → its aria-label → its title
-3. Last resort: parent element textContent first 30 chars
+1. `aria-label` → `title` → for `<img>`: `alt` → for `<input>` / `<textarea>`: `placeholder` → `value` only for `submit` / `button` / `reset` inputs → associated `<label>` text → `name` (typed values are never recorded)
+2. Closest interactive ancestor (`button, a, [role="button"]`) text → its aria-label → its title. For an icon-only element with no text of its own: a labelled descendant (`img[alt]`, `[aria-label]`, `svg title`)
+3. Last resort, only for non-interactive, non-editable targets: parent element textContent first 30 chars
 
 Runs on every click, independent of whether `text` is non-empty (so an icon button with text "×" still records `autoLabel: "Close dialog"`). The breadcrumb consumer can prefer text when present.
 
@@ -31,4 +31,9 @@ Runs on every click, independent of whether `text` is non-empty (so an icon butt
 
 ## Subsequent feedback
 
-- None directly. Multiple agents have referenced "what was clicked" without complaining about useless `el: 'img'` rows post-1.8.0.
+- Through v1.9.5: none directly. Multiple agents referenced "what was clicked" without complaining about useless `el: 'img'` rows post-1.8.0.
+- **2026-09-13 (unreleased, after v1.9.5; additive):** four audit fixes, Decision steps above amended in place.
+  1. **Privacy leak closed.** Step 1 used to fall back to `el.value` for any `<input>`, so clicking into a password or card-number field recorded what the user had typed. Only button-type inputs use their value now; other fields use `<label>` text or `name`. Text inside a `<textarea>` or `contenteditable` region is never recorded as `text`, and step 3 is skipped there.
+  2. **Sibling-text mislabel.** Step 3 on a button returned the parent's text, i.e. its siblings' labels joined ("EditDeleteShare"), and the silence check used `autoLabel || text`, so different buttons in one toolbar matched each other and produced false `user_stuck` reports. Step 3 is now limited to non-interactive targets, the silence check registers `text || autoLabel` (text stays canonical, per the trade-off above), and "same element" in `user_stuck` counting matches by `dataBb`, then `id`, then non-empty text, never on two missing values.
+  3. **Label surfaced.** `autoLabel` was captured but never shown. The copied panel report emits it as `label` when a click's `text` is empty (text stays under `text`, so the synthesized value reads as a guess); the panel lists, Markdown export and `bb-check --id` breadcrumbs fall back to it.
+  4. **SVG targets.** A click on an unclassed `<path>` / `<rect>` with no interactive ancestor now records the `<svg>` root (tag `svg`, its class). `className` and `href` are read as attributes, so SVG elements no longer record `"[object SVGAnimatedString]"`, and SVG `<a>` links get a string `href` and a silence check.

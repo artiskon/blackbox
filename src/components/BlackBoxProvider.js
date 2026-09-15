@@ -3,31 +3,32 @@
 import { Component } from 'react';
 import blackbox from '../core/blackbox.js';
 
-const isProduction = typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'production';
-
 class BlackBoxProvider extends Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, dismissed: false };
+    this.state = { hasError: false };
   }
 
   static getDerivedStateFromError() {
-    return { hasError: true, dismissed: false };
+    return { hasError: true };
   }
 
   componentDidCatch(error, info) {
-    if (!isProduction) {
-      try {
-        blackbox.captureError(error, {
-          source: 'react_boundary',
-          componentStack: info?.componentStack || '',
-        });
-      } catch { /* ignore */ }
-    }
+    // _recordError no-ops unless init() enabled BB, so enabled/NODE_ENV is
+    // honored there. Called directly (not captureError) so the entry keeps
+    // source 'react_boundary' instead of 'manual'.
+    try {
+      blackbox._recordError({
+        message: error?.message || String(error),
+        stack: error?.stack || '',
+        source: 'react_boundary',
+        context: { componentStack: info?.componentStack || '' },
+      });
+    } catch { /* ignore */ }
   }
 
   render() {
-    if (this.state.hasError && !this.state.dismissed) {
+    if (this.state.hasError) {
       if (this.props.fallback) {
         return this.props.fallback;
       }
@@ -43,40 +44,22 @@ class BlackBoxProvider extends Component {
           borderRadius: '8px',
           textAlign: 'center',
         }}>
-          <p style={{ color: '#333', fontSize: '16px', margin: '0 0 8px 0' }}>
+          <p style={{ color: '#333', fontSize: '16px', margin: '0 0 20px 0' }}>
             Something went wrong.
           </p>
-          <p style={{ color: '#333', fontSize: '14px', margin: '0 0 20px 0' }}>
-            The error has been recorded for debugging.
-          </p>
-          <div style={{ display: 'flex', gap: '12px' }}>
-            <button
-              onClick={() => this.setState({ hasError: false, dismissed: false })}
-              style={{
-                padding: '8px 20px',
-                border: '1px solid #999',
-                borderRadius: '4px',
-                background: 'white',
-                cursor: 'pointer',
-                fontSize: '14px',
-              }}
-            >
-              Try Again
-            </button>
-            <button
-              onClick={() => this.setState({ dismissed: true })}
-              style={{
-                padding: '8px 20px',
-                border: '1px solid #999',
-                borderRadius: '4px',
-                background: 'white',
-                cursor: 'pointer',
-                fontSize: '14px',
-              }}
-            >
-              Dismiss
-            </button>
-          </div>
+          <button
+            onClick={() => this.setState({ hasError: false })}
+            style={{
+              padding: '8px 20px',
+              border: '1px solid #999',
+              borderRadius: '4px',
+              background: 'white',
+              cursor: 'pointer',
+              fontSize: '14px',
+            }}
+          >
+            Try Again
+          </button>
         </div>
       );
     }

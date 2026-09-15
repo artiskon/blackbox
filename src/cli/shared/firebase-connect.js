@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getFirestore, connectFirestoreEmulator } from 'firebase/firestore';
+import { getFirestore, connectFirestoreEmulator, collection, query, limit, getDocs } from 'firebase/firestore';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -122,61 +122,56 @@ export async function connectToFirestore(collectionName = '__blackbox') {
     tried.push('1. Emulator (FIRESTORE_EMULATOR_HOST not set)');
   }
 
-  // Method 2: Firebase Admin (try unconditionally — SDK handles credential discovery
-  // via GOOGLE_APPLICATION_CREDENTIALS, local files, and GCE metadata server)
+  // Method 2: Firebase Admin. A service account key file in the project root
+  // wins; otherwise the SDK discovers credentials itself
+  // (GOOGLE_APPLICATION_CREDENTIALS, gcloud ADC, GCE metadata server). One
+  // initializeApp only: a failed credential-less attempt used to leave the
+  // default app behind, so a later key-file init was silently skipped.
+  const root = findProjectRoot();
+  const saFile = ['serviceAccountKey.json', 'service-account.json']
+    .find(f => fs.existsSync(path.join(root, f)));
+  const adminLabel = saFile ? `Firebase Admin via ${saFile}` : 'Firebase Admin';
   try {
     const admin = await import('firebase-admin');
     const adm = admin.default || admin;
-    const pid = projectId || undefined;
+    let pid = projectId || undefined;
     if (!adm.apps.length) {
-      adm.initializeApp({ projectId: pid });
+      if (saFile) {
+        const sa = JSON.parse(fs.readFileSync(path.join(root, saFile), 'utf8'));
+        pid = sa.project_id;
+        adm.initializeApp({ credential: adm.credential.cert(sa), projectId: pid });
+      } else {
+        adm.initializeApp({ projectId: pid });
+      }
     }
     const db = adm.firestore();
     // Verify connection works with a quick test query
     await db.collection(collectionName).limit(1).get();
-    console.log(`[BlackBox] Connected via Firebase Admin (project: ${pid || 'auto'})`);
+    console.log(`[BlackBox] Connected via ${adminLabel} (project: ${pid || 'auto'})`);
     return { db, collectionName, isAdmin: true };
   } catch (e) {
-    tried.push(`2. Firebase Admin (error: ${e.message})`);
+    tried.push(`2. ${adminLabel} (error: ${e.message})`);
   }
 
-  // Method 3: Service account key file
-  const root = findProjectRoot();
-  const saFiles = ['serviceAccountKey.json', 'service-account.json'];
-  for (const saFile of saFiles) {
-    const saPath = path.join(root, saFile);
-    if (fs.existsSync(saPath)) {
-      try {
-        const admin = await import('firebase-admin');
-        const adm = admin.default || admin;
-        const sa = JSON.parse(fs.readFileSync(saPath, 'utf8'));
-        if (!adm.apps.length) {
-          adm.initializeApp({ credential: adm.credential.cert(sa), projectId: sa.project_id });
-        }
-        const db = adm.firestore();
-        console.log(`[BlackBox] Connected via service account (${saFile})`);
-        return { db, collectionName, isAdmin: true };
-      } catch (e) {
-        tried.push(`3. Service account key ${saFile} (error: ${e.message})`);
-      }
-    }
-  }
-  if (!tried.some(t => t.startsWith('3.'))) {
-    tried.push('3. Service account key (not found)');
-  }
-
-  // Method 4: Web SDK with just projectId
+  // Method 3: Web SDK, unauthenticated. Only works if firestore.rules let an
+  // unauthenticated client read __blackbox, so probe before claiming success;
+  // getFirestore() alone never touches the network, which used to report
+  // "Connected" and hide the Admin failure behind a later permissions error.
   if (projectId) {
     try {
       const app = initializeApp({ projectId }, `blackbox-cli-${Date.now()}`);
       const db = getFirestore(app);
+      const snap = await getDocs(query(collection(db, collectionName), limit(1)));
+      // An unreachable or rejecting backend can resolve from the empty local
+      // cache instead of throwing, which would read as "no errors".
+      if (snap.metadata.fromCache) throw new Error('no server response: read denied or Firestore unreachable (see the @firebase/firestore log above)');
       console.log(`[BlackBox] Connected via Web SDK (project: ${projectId})`);
       return { db, collectionName };
     } catch (e) {
-      tried.push(`4. Web SDK with open rules (error: ${e.message})`);
+      tried.push(`3. Web SDK, unauthenticated (error: ${e.code ? `${e.code}: ` : ''}${e.message})`);
     }
   } else {
-    tried.push('4. Web SDK with open rules (no projectId detected)');
+    tried.push('3. Web SDK, unauthenticated (no projectId detected)');
   }
 
   // All methods failed
@@ -185,7 +180,9 @@ export async function connectToFirestore(collectionName = '__blackbox') {
   for (const t of tried) console.error(`  ${t}`);
   console.error(`\nSolutions:`);
   console.error(`  - If using Firebase Emulator: make sure it's running (firebase emulators:start)`);
-  console.error(`  - If using cloud Firestore: run 'firebase login' first`);
+  console.error(`  - If using cloud Firestore: npm i -D firebase-admin, then run 'gcloud auth application-default login'`);
+  console.error(`    (or set GOOGLE_APPLICATION_CREDENTIALS, or put serviceAccountKey.json in the project root).`);
+  console.error(`    Do NOT open firestore.rules to make the CLI work.`);
   console.error(`  - Or create a blackbox.config.json with: { "projectId": "your-project-id" }\n`);
   process.exit(1);
 }

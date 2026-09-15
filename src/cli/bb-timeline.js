@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 
 import { connectToFirestore } from './shared/firebase-connect.js';
-import { writeLog, checkCollectionSize } from './shared/utils.js';
-import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
+import { writeLog, checkCollectionSize, parseCliArgs, exitWithUsage } from './shared/utils.js';
+import { collection, query, where, orderBy, getDocs, Timestamp } from 'firebase/firestore';
+
+const USAGE = `Usage: bb-timeline [--minutes N]
+  --minutes N               Window size in minutes (default 5, N >= 1)
+  -h, --help                Show this help
+Both --flag value and --flag=value work.`;
 
 function parseArgs() {
-  const args = process.argv.slice(2);
-  let minutes = 5;
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--minutes' && args[i + 1]) {
-      minutes = parseInt(args[i + 1], 10) || 5;
-    }
-  }
-  return { minutes };
+  const { flags } = parseCliArgs({ '--minutes': 'int' }, USAGE);
+  if (flags.minutes !== undefined && flags.minutes < 1) exitWithUsage('--minutes must be 1 or more', USAGE);
+  return { minutes: flags.minutes ?? 5 };
 }
 
 async function main() {
@@ -25,19 +25,35 @@ async function main() {
 
     let docs;
 
+    // Error docs are deduped by fingerprint: a re-fire bumps lastSeen and
+    // refreshes breadcrumbs but keeps the original createdAt. So createdAt
+    // alone misses recurring errors; also pull errors by lastSeen and merge
+    // (the breadcrumb dedup below absorbs the overlap).
     if (isAdmin) {
       const snapshot = await db.collection(collectionName)
         .where('createdAt', '>=', cutoff)
         .get();
-      docs = snapshot.docs.map(d => d.data());
+      const errSnap = await db.collection(collectionName)
+        .where('type', '==', 'error')
+        .where('lastSeen', '>=', cutoff)
+        .orderBy('lastSeen', 'desc')
+        .get();
+      docs = [...snapshot.docs, ...errSnap.docs].map(d => d.data());
     } else {
       const ts = Timestamp.fromDate(cutoff);
       const q = query(
         collection(db, collectionName),
         where('createdAt', '>=', ts)
       );
+      const errQ = query(
+        collection(db, collectionName),
+        where('type', '==', 'error'),
+        where('lastSeen', '>=', ts),
+        orderBy('lastSeen', 'desc')
+      );
       const snapshot = await getDocs(q);
-      docs = snapshot.docs.map(d => d.data());
+      const errSnap = await getDocs(errQ);
+      docs = [...snapshot.docs, ...errSnap.docs].map(d => d.data());
     }
 
     // Extract breadcrumbs from ALL documents (both error and activity)

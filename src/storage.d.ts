@@ -5,6 +5,11 @@
  *
  * Filter for storage-specific failures with `bb-check --source=storage`.
  *
+ * An intentionally aborted request (AbortController) records only a
+ * breadcrumb with `aborted: true`, no error; timeouts (AbortSignal.timeout)
+ * still record an error. `init` may be omitted, and a Request
+ * input's own method is used.
+ *
  * @param input  URL string or Request — passed straight to fetch()
  * @param init   standard fetch RequestInit
  * @param details optional metadata that surfaces in the breadcrumb / error context:

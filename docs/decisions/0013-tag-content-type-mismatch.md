@@ -36,3 +36,4 @@ When the content-type doesn't match, set `urlReachability: 'tag_content_type_mis
 ## Subsequent feedback
 
 - None directly. The classifier ships with the v1.9.2 release.
+- **2026-09-13 (unreleased, after v1.9.5; additive):** empty `src` no longer reaches this classifier. `<img src="">` / `video.src = ''` fires an error event whose `src` property resolves to the PAGE url; probing that returned HTML and was labelled `tag_content_type_mismatch` with a per-route fingerprint. The resource hook now detects an empty `src`/`href` attribute (with no `srcset`) and records `urlReachability: 'unknown'`, `emptySrc: true`, message `<tag> - (empty src)` and an `action_hint` ("don't render the element until the URL exists"), one row per tag. The hook also probes `currentSrc` (the srcset / `<source>` variant actually loaded).
